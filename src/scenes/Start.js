@@ -9,12 +9,28 @@ export class Start extends Phaser.Scene {
     }
 
     create() {
-        this.grass = this.add.tileSprite(640, 360, 1280, 720, 'grass');
+        // 1. Defina o tamanho do mapa (ex: 3000x2000 pixels)
+        const mapWidth = 3000;
+        const mapHeight = 2000;
 
-        // Passamos a 'this' (a própria cena) para que o Player 
-        // possa acessar o sistema de física e som que carregamos acima
+        // 2. Configure os limites do mundo físico
+        this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
+
+        // 3. Adicione o fundo (TileSprite é ótimo para grama que se repete)
+        this.grass = this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass');
+        this.grass.setOrigin(0, 0); // Começa no topo esquerdo
+
+        // 4. Crie o player
         this.player = new Player(this, 640, 360); 
         this.inputs = new InputManager(this);
+
+        // --- LÓGICA DA CÂMERA ---
+        
+        // 5. Faz a câmera seguir o player
+        this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+
+        // 6. Impede que a câmera mostre o que está fora do mapa
+        this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
     }
 
     update() {
