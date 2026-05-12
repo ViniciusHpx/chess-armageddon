@@ -1,86 +1,68 @@
 // Player.js
 export default class Player extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y) {
-        // Inicializa o Sprite com a textura 'pawn' carregada na cena
         super(scene, x, y, 'pawn');
-
-        // Adiciona o objeto à cena e ao sistema de física
         scene.add.existing(this);
         scene.physics.add.existing(this);
 
-        // Configurações de colisão e corpo físico
         this.setCollideWorldBounds(true);
         this.body.setSize(128, 64);
         this.body.setOffset(64, 192);
 
-        // Atributos de RPG (Stats)
-        this.stats = {
-            hp: 100,
-            maxHp: 100,
-            shield: 50,
-            maxShield: 100,
-            speed: 200,
-            attackDamage: 10,
-            specialAttackDamage: 25
-        };
+        this.stats = { speed: 200 };
+        this.wasWalking = false;
 
-        // Som de passos (instanciado a partir do áudio carregado na Scene)
-        this.footstepSound = scene.sound.add('footstep', { loop: true, volume: 0.5 });
-        this.wasWalking = false; // Controle para não disparar o play() repetidamente
+        // --- Novo: Configuração da Animação Procedural ---
+        this.walkTween = null;
     }
 
-    /**
-     * @param {Object} movement - Objeto contendo { dx, dy } normalizados (de -1 a 1)
-     */
     update(movement) {
         const { dx, dy } = movement;
-
-        // Aplica a velocidade baseada nos stats do player
         this.setVelocity(dx * this.stats.speed, dy * this.stats.speed);
 
-        // Lógica de espelhar o sprite (Flip)
-        if (dx < 0) {
-            this.setFlipX(true);  // Esquerda
-        } else if (dx > 0) {
-            this.setFlipX(false); // Direita
-        }
+        if (dx < 0) this.setFlipX(true);
+        else if (dx > 0) this.setFlipX(false);
 
-        // Controle do som de passos
         const isMoving = (dx !== 0 || dy !== 0);
 
+        // Lógica para disparar o efeito visual
         if (isMoving && !this.wasWalking) {
-            this.footstepSound.play();
+            this.startWalkEffect();
             this.wasWalking = true;
         } else if (!isMoving && this.wasWalking) {
-            this.footstepSound.stop();
+            this.stopWalkEffect();
             this.wasWalking = false;
         }
     }
 
-    // Exemplo de método para o especial da torre que você mencionou
-    healShield(amount) {
-        this.stats.shield += amount;
-        if (this.stats.shield > this.stats.maxShield) {
-            this.stats.shield = this.stats.maxShield;
-        }
-        console.log(`Escudo regenerado: ${this.stats.shield}`);
+    startWalkEffect() {
+        // Criamos um efeito de "pular" e "achatar" levemente
+        this.walkTween = this.scene.tweens.add({
+            targets: this,
+            scaleY: 0.9,          // Achata um pouco (Squash)
+            scaleX: 1.05,         // Alarga um pouco (Stretch)
+            angle: { from: -5, to: 5 }, // Balança para os lados
+            duration: 150,        // Velocidade do passo
+            yoyo: true,           // Volta ao normal
+            repeat: -1,           // Infinito enquanto caminha
+            ease: 'Sine.easeInOut'
+        });
     }
 
-    takeDamage(amount) {
-        // Primeiro retira do escudo
-        if (this.stats.shield > 0) {
-            this.stats.shield -= amount;
-            if (this.stats.shield < 0) {
-                this.stats.hp += this.stats.shield; // O que sobrou tira do HP
-                this.stats.shield = 0;
-            }
-        } else {
-            this.stats.hp -= amount;
-        }
-
-        if (this.stats.hp <= 0) {
-            console.log("Player morreu!");
-            // Lógica de Game Over aqui
+    stopWalkEffect() {
+        if (this.walkTween) {
+            this.walkTween.stop();
+            this.walkTween = null;
+            
+            // Reseta as propriedades para o estado original
+            this.scene.tweens.add({
+                targets: this,
+                scaleX: 1,
+                scaleY: 1,
+                angle: 0,
+                duration: 200,
+                ease: 'Back.out'
+            });
         }
     }
 }

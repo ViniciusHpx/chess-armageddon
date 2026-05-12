@@ -5,8 +5,7 @@ export class Start extends Phaser.Scene {
     preload() {
         // O carregamento dos assets aqui na Scene
         this.load.image('grass', 'assets/grass.png');
-        this.load.spritesheet('pawn', 'assets/pawn_spritesheet.png', { frameWidth: 256, frameHeight: 256 });
-        this.load.audio('footstep', 'assets/grass-footstep.mp3');
+        this.load.spritesheet('pawn', 'assets/pawn_256.png', { frameWidth: 256, frameHeight: 256 });
     }
 
     create() {
