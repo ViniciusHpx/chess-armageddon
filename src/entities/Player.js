@@ -11,9 +11,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
         this.stats = { speed: 200 };
         this.wasWalking = false;
-
-        // --- Novo: Configuração da Animação Procedural ---
         this.walkTween = null;
+    }
+
+    setSkin(skinKey) {
+        this.setTexture(skinKey);
     }
 
     update(movement) {

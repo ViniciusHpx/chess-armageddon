@@ -6,6 +6,8 @@ export class Start extends Phaser.Scene {
         // O carregamento dos assets aqui na Scene
         this.load.image('grass', 'assets/map_3548_1774.png');
         this.load.spritesheet('pawn', 'assets/pawn_128.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('tower', 'assets/tower_128.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('horse', 'assets/horse_128.png', { frameWidth: 128, frameHeight: 128 });
     }
 
     create() {
@@ -31,6 +33,25 @@ export class Start extends Phaser.Scene {
 
         // 6. Impede que a câmera mostre o que está fora do mapa
         this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
+
+        // ----- SISTEMA DE TROCA DE SKIN -----
+        // Ordem das skins
+        this.skins = ['pawn', 'tower', 'horse'];
+        this.currentSkinIndex = 0;  // começa com 'pawn'
+
+        // Temporizador de 5 segundos, repetindo infinitamente
+        this.time.addEvent({
+            delay: 5000,
+            callback: this.cycleSkin,
+            callbackScope: this,
+            loop: true
+        });
+    }
+
+    cycleSkin() {
+        this.currentSkinIndex = (this.currentSkinIndex + 1) % this.skins.length;
+        const nextSkin = this.skins[this.currentSkinIndex];
+        this.player.setSkin(nextSkin);
     }
 
     update() {
