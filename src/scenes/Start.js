@@ -4,14 +4,14 @@ import InputManager from '../utils/InputManager.js';
 export class Start extends Phaser.Scene {
     preload() {
         // O carregamento dos assets aqui na Scene
-        this.load.image('grass', 'assets/grass.png');
-        this.load.spritesheet('pawn', 'assets/pawn_256.png', { frameWidth: 256, frameHeight: 256 });
+        this.load.image('grass', 'assets/map_3548_1774.png');
+        this.load.spritesheet('pawn', 'assets/pawn_128.png', { frameWidth: 128, frameHeight: 128 });
     }
 
     create() {
         // 1. Defina o tamanho do mapa (ex: 3000x2000 pixels)
-        const mapWidth = 3000;
-        const mapHeight = 2000;
+        const mapWidth = 3548;
+        const mapHeight = 1774;
 
         // 2. Configure os limites do mundo físico
         this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
