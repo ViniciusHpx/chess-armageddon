@@ -5,6 +5,8 @@ export class Start extends Phaser.Scene {
     preload() {
         // O carregamento dos assets aqui na Scene
         this.load.image('grass', 'assets/map_3548_1774.png');
+        this.load.image('collision_map', 'assets/map_collision_3548_1774.png');
+
         this.load.spritesheet('pawn', 'assets/pawn_128.png', { frameWidth: 128, frameHeight: 128 });
         this.load.spritesheet('tower', 'assets/tower_128.png', { frameWidth: 128, frameHeight: 128 });
         this.load.spritesheet('horse', 'assets/horse_128.png', { frameWidth: 128, frameHeight: 128 });
@@ -22,8 +24,16 @@ export class Start extends Phaser.Scene {
         this.grass = this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass');
         this.grass.setOrigin(0, 0); // Começa no topo esquerdo
 
+        // Criamos um objeto de textura para ler os pixels
+        this.collisionTexture = this.textures.get('collision_map').getSourceImage();
+        this.collisionCanvas = document.createElement('canvas');
+        this.collisionCanvas.width = this.collisionTexture.width;
+        this.collisionCanvas.height = this.collisionTexture.height;
+        this.collisionContext = this.collisionCanvas.getContext('2d');
+        this.collisionContext.drawImage(this.collisionTexture, 0, 0);
+
         // 4. Crie o player
-        this.player = new Player(this, 640, 360); 
+        this.player = new Player(this, 500, 700, this.collisionContext);
         this.inputs = new InputManager(this);
 
         // --- LÓGICA DA CÂMERA ---
@@ -41,7 +51,7 @@ export class Start extends Phaser.Scene {
 
         // Temporizador de 5 segundos, repetindo infinitamente
         this.time.addEvent({
-            delay: 5000,
+            delay: 25000,
             callback: this.cycleSkin,
             callbackScope: this,
             loop: true
