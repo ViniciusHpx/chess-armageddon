@@ -19,18 +19,15 @@ export class Start extends Phaser.Scene {
 
         // 2. Configure os limites do mundo físico
         this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
+        this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass').setOrigin(0);
 
         // 3. Adicione o fundo (TileSprite é ótimo para grama que se repete)
         this.grass = this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass');
         this.grass.setOrigin(0, 0); // Começa no topo esquerdo
 
-        // Criamos um objeto de textura para ler os pixels
-        this.collisionTexture = this.textures.get('collision_map').getSourceImage();
-        this.collisionCanvas = document.createElement('canvas');
-        this.collisionCanvas.width = this.collisionTexture.width;
-        this.collisionCanvas.height = this.collisionTexture.height;
-        this.collisionContext = this.collisionCanvas.getContext('2d');
-        this.collisionContext.drawImage(this.collisionTexture, 0, 0);
+        // Grupo dinâmico para otimização de colisões com inimigos
+        this.enemies = this.physics.add.group();
+        this.spawnEnemies(15);
 
         // 4. Crie o player
         this.player = new Player(this, 500, 700, this.collisionContext);
@@ -44,18 +41,32 @@ export class Start extends Phaser.Scene {
         // 6. Impede que a câmera mostre o que está fora do mapa
         this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
 
-        // ----- SISTEMA DE TROCA DE SKIN -----
-        // Ordem das skins
-        this.skins = ['pawn', 'tower', 'horse'];
-        this.currentSkinIndex = 0;  // começa com 'pawn'
-
-        // Temporizador de 5 segundos, repetindo infinitamente
-        this.time.addEvent({
-            delay: 25000,
-            callback: this.cycleSkin,
-            callbackScope: this,
-            loop: true
+        // Colisão Player vs Inimigos: Se o player tocar sem estar atacando, ele morre
+        this.physics.add.collider(this.player, this.enemies, (player, enemy) => {
+            if (!player._isAttacking) {
+                player.resetToPawn();
+                // Opcional: Voltar para o spawn
+                player.setPosition(640, 360);
+                this.cameras.main.shake(200, 0.01);
+            }
         });
+    }
+
+    // Sistema de Spawn: gera inimigos em posições aleatórias dentro do mapa
+    spawnEnemies(count) {
+        for (let i = 0; i < count; i++) {
+            const x = Phaser.Math.Between(800, 3000);
+            const y = Phaser.Math.Between(200, 1500);
+            const bot = this.enemies.create(x, y, 'pawn').setTint(0x555555);
+            bot.body.setCollideWorldBounds(true);
+            
+            // Método para o bot morrer
+            bot.die = () => {
+                bot.destroy();
+                // Spawnar outro bot depois de um tempo para manter a arena cheia
+                this.time.delayedCall(3000, () => this.spawnEnemies(1));
+            };
+        }
     }
 
     cycleSkin() {
@@ -67,5 +78,10 @@ export class Start extends Phaser.Scene {
     update() {
         const movement = this.inputs.getMovementVector();
         this.player.update(movement);
+
+        // Teclado Espaço
+        if (Phaser.Input.Keyboard.JustDown(this.inputs.spaceKey)) {
+            this.player.attack();
+        }
     }
 }

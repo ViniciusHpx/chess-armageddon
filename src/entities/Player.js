@@ -1,56 +1,117 @@
+// Player.js
+import { RANKS } from '../constants/Hierarchy.js';
+
 export default class Player extends Phaser.Physics.Arcade.Sprite {
-    constructor(scene, x, y, collisionContext) {
-        super(scene, x, y, 'pawn');
+    constructor(scene, x, y) {
+        // Inicializa a classe pai (Sprite) com a skin inicial de Peão
+        super(scene, x, y, RANKS.PAWN.key);
+
+        // Adiciona o objeto à cena e ao sistema de física
         scene.add.existing(this);
         scene.physics.add.existing(this);
 
-        this.collisionContext = collisionContext; // Armazena o mapa de colisão
-        this.setCollideWorldBounds(true);
-        
-        // Ajuste o corpo para ser menor, facilitando a navegação em corredores
-        this.body.setSize(40, 20); 
-        this.body.setOffset(44, 100); 
+        this.initPhysics();
 
-        this.stats = { speed: 200 };
-        this.wasWalking = false;
+        // Estados Internos
+        this._currentRank = RANKS.PAWN; // Estado atual do rank
+        this._isAttacking = false;  // Bloqueia movimento durante o ataque
+        this.wasWalking = false;    // Controle para disparar tweens de caminhada
+        this._walkTween = null;     // Armazena a animação ativa de movimento
+    }
+
+    initPhysics() {
+        this.setCollideWorldBounds(true);   // Impede sair do mapa
+        // Ajusta a caixa de colisão para os "pés" da peça
+        this.body.setSize(80, 40);
+        this.body.setOffset(24, 88);
+    }
+
+    // Lógica de evolução: troca o rank atual pelo definido na propriedade 'next'
+    promote() {
+        const nextRankKey = this._currentRank.next;
+        this.setRank(RANKS[nextRankKey]);
+
+        // Feedback visual de evolução 
+        this.setTint(0x00ff00);
+        this.scene.time.delayedCall(200, () => this.clearTint());
+    }
+
+    // Aplica as propriedades do rank 
+    setRank(rankConfig) {
+        this._currentRank = rankConfig;
+        this.setTexture(rankConfig.key);
+    }
+
+    // Retorna o jogador ao estado inicial
+    resetToPawn() {
+        this.setRank(RANKS.PAWN);
+    }
+
+    attack() {
+        if (this._isAttacking) return; // Evita spam de ataque
+        this._isAttacking = true;
+
+        // Animação de "investida" rápida para frente e volta
+        this.scene.tweens.add({
+            targets: this,
+            x: this.flipX ? this.x - 30 : this.x + 30,
+            duration: 100,
+            yoyo: true,
+            onComplete: () => this._isAttacking = false
+        });
+
+        this.executeHitCheck();
+    }
+
+    // Cria uma zona temporária de dano baseada no rank atual
+    executeHitCheck() {
+        const { width, height, offset } = this._currentRank.hitbox;
+        // Posiciona a hitbox à frente do personagem dependendo da direção
+        const hitX = this.flipX ? this.x - offset : this.x + offset;
+
+        // Zone é um objeto invisível usado apenas para detecção de física
+        const zone = this.scene.add.zone(hitX, this.y, width, height);
+        this.scene.physics.add.existing(zone);
+
+        // Verifica sobreposição entre a zona de ataque e o grupo de inimigos
+        this.scene.physics.overlap(zone, this.scene.enemies, (z, enemy) => {
+            if (enemy.die) {
+                enemy.die();    // Mata o inimigo
+                this.promote(); // Promove o jogador
+            }
+        });
+        // Remove a zona após 100ms
+        this.scene.time.delayedCall(100, () => zone.destroy());
     }
 
     setSkin(skinKey) {
         this.setTexture(skinKey);
     }
 
+    // Loop de atualização do jogador chamado pela Scene
     update(movement) {
+        if (this._isAttacking) return;
+
         const { dx, dy } = movement;
-        
-        // Calculamos a próxima posição teórica
-        const nextX = this.x + (dx * this.stats.speed * 0.016); // 0.016 é aprox. 1 frame a 60fps
-        const nextY = this.y + (dy * this.stats.speed * 0.016);
+        const speed = this._currentRank.speed;
 
-        // Checamos se o pixel na posição (nextX, nextY) é visível no mapa de colisão
-        if (this.canMoveTo(nextX, nextY)) {
-            this.setVelocity(dx * this.stats.speed, dy * this.stats.speed);
-        } else {
-            // Se bater, tentamos permitir movimento apenas em um eixo (deslizar na parede)
-            if (this.canMoveTo(nextX, this.y)) {
-                this.setVelocity(dx * this.stats.speed, 0);
-            } else if (this.canMoveTo(this.x, nextY)) {
-                this.setVelocity(0, dy * this.stats.speed);
-            } else {
-                this.setVelocity(0, 0);
-            }
-        }
+        // Aplica velocidade baseada na normalização do InputManager
+        this.setVelocity(dx * speed, dy * speed);
 
-        // Lógica visual de flip e tweens (mantida igual)
-        if (dx < 0) this.setFlipX(true);
-        else if (dx > 0) this.setFlipX(false);
+        if (dx !== 0) this.setFlipX(dx < 0);
 
-        const isMoving = (this.body.velocity.x !== 0 || this.body.velocity.y !== 0);
-        if (isMoving && !this.wasWalking) {
+        this.handleVisualEffects(dx, dy);
+    }
+
+    // Controla o início e fim dos efeitos visuais de movimento
+    handleVisualEffects(dx, dy) {
+        const isMoving = (dx !== 0 || dy !==0);
+        if (isMoving && !this._wasWalking) {
             this.startWalkEffect();
-            this.wasWalking = true;
-        } else if (!isMoving && this.wasWalking) {
+            this._wasWalking = true;
+        } else if (!isMoving && this._wasWalking) {
             this.stopWalkEffect();
-            this.wasWalking = false;
+            this._wasWalking = false;
         }
     }
 
@@ -87,19 +148,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     stopWalkEffect() {
-        if (this.walkTween) {
-            this.walkTween.stop();
-            this.walkTween = null;
-            
-            // Reseta as propriedades para o estado original
-            this.scene.tweens.add({
-                targets: this,
-                scaleX: 1,
-                scaleY: 1,
-                angle: 0,
-                duration: 200,
-                ease: 'Back.out'
-            });
+       if (this._walkTween) {
+            this._walkTween.stop();
+            this._walkTween = null;
+            this.setAngle(0);
+            this.setScale(1);
         }
     }
 }

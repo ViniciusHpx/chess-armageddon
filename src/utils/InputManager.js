@@ -25,6 +25,7 @@ export default class InputManager {
         // Criação Visual do Joystick
         this.createVirtualJoystick(baseX, baseY, baseRadius, thumbRadius);
 
+        this.createAttackButton();
         // Configuração dos Eventos de Toque
         this.setupTouchEvents();
     }
@@ -39,6 +40,19 @@ export default class InputManager {
         this.joystickThumb = this.scene.add.circle(x, y, thumbR, 0xffffff, 0.6);
         this.joystickThumb.setScrollFactor(0);
         this.joystickThumb.setDepth(101);     // Acima da base
+    }
+
+    createAttackButton() {
+        const { width, height } = this.scene.cameras.main;
+
+        this.attackBtn = this.scene.add.circle(width - 100, height - 120, 50, 0xff0000, 0.4)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(100);
+        
+        this.attackBtn.on('pointerdown', () => this.scene.player.attack());
+        // Referência à tecla de espaço para o Update da Scene vulgo atacar
+        this.spaceKey = this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     }
 
     setupTouchEvents() {
