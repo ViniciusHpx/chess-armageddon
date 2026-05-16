@@ -1,0 +1,6 @@
+# IA e Configurações Locais
+.claude/
+.prompt_history/
+
+# Arquivos de log ou temporários que possam surgir no histórico
+.prompt_history/*.txt
