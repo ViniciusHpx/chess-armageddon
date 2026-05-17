@@ -1,9 +1,9 @@
-import Player from '../entities/Player.js';
+import HumanPlayer from '../entities/HumanPlayer.js';
+import AIPlayer from '../entities/AIPlayer.js';
 import InputManager from '../utils/InputManager.js';
 
 export class Start extends Phaser.Scene {
     preload() {
-        // O carregamento dos assets aqui na Scene
         this.load.image('grass', 'assets/map_3548_1774.png');
         this.load.image('collision_map', 'assets/map_collision_3548_1774.png');
 
@@ -13,73 +13,59 @@ export class Start extends Phaser.Scene {
     }
 
     create() {
-        // 1. Defina o tamanho do mapa (ex: 3000x2000 pixels)
         const mapWidth = 3548;
         const mapHeight = 1774;
 
-        // 2. Configure os limites do mundo físico
         this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
-        this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass').setOrigin(0);
+        this.grass = this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass').setOrigin(0);
 
-        // 3. Adicione o fundo (TileSprite é ótimo para grama que se repete)
-        this.grass = this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass');
-        this.grass.setOrigin(0, 0); // Começa no topo esquerdo
+        // Grupos de times
+        this.alliedPlayers = this.physics.add.group();
+        this.enemyPlayers = this.physics.add.group();
 
-        // Grupo dinâmico para otimização de colisões com inimigos
-        this.enemies = this.physics.add.group();
-        this.spawnEnemies(15);
-
-        // 4. Crie o player
-        this.player = new Player(this, 500, 700, this.collisionContext);
-        this.inputs = new InputManager(this);
-
-        // --- LÓGICA DA CÂMERA ---
-        
-        // 5. Faz a câmera seguir o player
-        this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-
-        // 6. Impede que a câmera mostre o que está fora do mapa
-        this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
-
-        // Colisão Player vs Inimigos: Se o player tocar sem estar atacando, ele morre
-        this.physics.add.collider(this.player, this.enemies, (player, enemy) => {
-            if (!player._isAttacking) {
-                player.resetToPawn();
-                // Opcional: Voltar para o spawn
-                player.setPosition(640, 360);
-                this.cameras.main.shake(200, 0.01);
-            }
-        });
-    }
-
-    // Sistema de Spawn: gera inimigos em posições aleatórias dentro do mapa
-    spawnEnemies(count) {
-        for (let i = 0; i < count; i++) {
+        // Aliados (4 bots)
+        for (let i = 0; i < 4; i++) {
             const x = Phaser.Math.Between(800, 3000);
             const y = Phaser.Math.Between(200, 1500);
-            const bot = this.enemies.create(x, y, 'pawn').setTint(0x555555);
-            bot.body.setCollideWorldBounds(true);
-            
-            // Método para o bot morrer
-            bot.die = () => {
-                bot.destroy();
-                // Spawnar outro bot depois de um tempo para manter a arena cheia
-                this.time.delayedCall(3000, () => this.spawnEnemies(1));
-            };
+            const ally = new AIPlayer(this, x, y, 'ally');
+            this.alliedPlayers.add(ally);
         }
+
+        // Inimigos (5 bots)
+        for (let i = 0; i < 5; i++) {
+            const x = Phaser.Math.Between(800, 3000);
+            const y = Phaser.Math.Between(200, 1500);
+            const enemy = new AIPlayer(this, x, y, 'enemy');
+            this.enemyPlayers.add(enemy);
+        }
+
+        // Jogador humano (pertence aos aliados)
+        this.player = new HumanPlayer(this, 500, 700);
+        this.alliedPlayers.add(this.player); // agora está no grupo aliado
+
+        this.inputs = new InputManager(this);
+
+        // Câmera
+        this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+        this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
+
+        // Colisões entre times (sem dano por toque)
+        this.physics.add.collider(this.alliedPlayers, this.enemyPlayers);
+        this.physics.add.collider(this.alliedPlayers, this.alliedPlayers);
+        this.physics.add.collider(this.enemyPlayers, this.enemyPlayers);
     }
 
-    cycleSkin() {
-        this.currentSkinIndex = (this.currentSkinIndex + 1) % this.skins.length;
-        const nextSkin = this.skins[this.currentSkinIndex];
-        this.player.setSkin(nextSkin);
-    }
-
-    update() {
+    update(time, delta) {
         const movement = this.inputs.getMovementVector();
         this.player.update(movement);
 
-        // Teclado Espaço
+        // Atualiza IA de todos os bots
+        this.alliedPlayers.getChildren().forEach(ai => {
+            if (ai !== this.player) ai.aiUpdate(time, delta);
+        });
+        this.enemyPlayers.getChildren().forEach(ai => ai.aiUpdate(time, delta));
+
+        // Ataque do humano (espaço)
         if (Phaser.Input.Keyboard.JustDown(this.inputs.spaceKey)) {
             this.player.attack();
         }
