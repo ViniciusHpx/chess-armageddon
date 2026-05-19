@@ -4,10 +4,64 @@ import { RANKS } from '../constants/Hierarchy.js';
 export default class HumanPlayer extends PlayerBase {
     constructor(scene, x, y) {
         super(scene, x, y, RANKS.PAWN.key, 'human', 0xffff00);
+
+        // Estado de carga do ataque
+        this._isCharging = false;
+        this._chargeStartTime = 0;
+        this._chargeComplete = false;
     }
 
+    // Ataque normal (usado quando o botão é apenas pressionado sem carga completa)
     attack() {
         if (this._isAttacking) return;
+        this.performAttack(this.scene.enemyPlayers);
+    }
+
+    /**
+     * Inicia o processo de carga (botão pressionado).
+     */
+    startCharging() {
+        if (this._isAttacking || this._isCharging) return;
+        this._isCharging = true;
+        this._chargeStartTime = this.scene.time.now;
+        this._chargeComplete = false;
+    }
+
+    /**
+     * Solta o botão de ataque. Executa ataque normal ou carregado.
+     */
+    releaseAttack() {
+        if (!this._isCharging) return;
+
+        const elapsed = this.scene.time.now - this._chargeStartTime;
+        const chargeTime = this._currentRank.chargeTime;
+
+        if (elapsed >= chargeTime) {
+            this._performChargedAttack();
+        } else {
+            this.attack();
+        }
+
+        // Finaliza a carga
+        this._isCharging = false;
+        this._chargeComplete = false;
+    }
+
+    /**
+     * Atualiza o progresso da carga enquanto o botão está segurado.
+     */
+    updateCharge() {
+        if (!this._isCharging) return;
+        const elapsed = this.scene.time.now - this._chargeStartTime;
+        if (elapsed >= this._currentRank.chargeTime) {
+            this._chargeComplete = true;
+            // O brilho já está ativo, pode-se adicionar som ou outro feedback
+        }
+    }
+
+    _performChargedAttack() {
+        if (this._isAttacking) return;
+        this._isChargedAttack = true; // ativa dobro de dano e alcance
         this.performAttack(this.scene.enemyPlayers);
     }
 
@@ -17,6 +71,8 @@ export default class HumanPlayer extends PlayerBase {
         this.currentHealth = this.maxHealth;
         this.updateHealthBar();
 
+        this.resetAura(); // reseta aura ao morrer
+
         this.setPosition(640, 360);
 
         this.scene.cameras.main.shake(200, 0.01);
@@ -25,11 +81,27 @@ export default class HumanPlayer extends PlayerBase {
         this.scene.time.delayedCall(1000, () => {
             this._isInvulnerable = false;
         });
+
+        // Cancela qualquer carga em andamento
+        this._isCharging = false;
+        this._chargeComplete = false;
     }
 
-    update(movement) {
-        // Movimentação normal apenas se não estiver atacando
-        if (!this._isAttacking) {
+    update(movement, attackState) {
+        // Entrada de ataque
+        if (attackState.justPressed) {
+            this.startCharging();
+        }
+        if (attackState.justReleased) {
+            this.releaseAttack();
+        }
+
+        if (this._isCharging) {
+            this.updateCharge();
+        }
+
+        // Movimentação (bloqueada durante ataque ou carga)
+        if (!this._isAttacking && !this._isCharging) {
             const { dx, dy } = movement;
             const speed = this._currentRank.speed;
 
@@ -39,11 +111,13 @@ export default class HumanPlayer extends PlayerBase {
 
             this.handleVisualEffects(dx, dy);
         } else {
-            // Durante o ataque, para o personagem (sem velocidade)
             this.setVelocity(0, 0);
+            if (this.wasWalking) {
+                this.stopWalkEffect();
+                this.wasWalking = false;
+            }
         }
 
-        // Sempre chama commonUpdate para atualizar elipse, barra de vida e ataque visual
         this.commonUpdate();
     }
 

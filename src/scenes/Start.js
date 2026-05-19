@@ -8,8 +8,10 @@ export class Start extends Phaser.Scene {
         this.load.image('collision_map', 'assets/map_collision_3548_1774.png');
 
         this.load.spritesheet('pawn', 'assets/pawn_128.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('tower', 'assets/tower_128.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('horse', 'assets/horse_128.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('tower', 'assets/tower_160.png', { frameWidth: 160, frameHeight: 160 });
+        this.load.spritesheet('horse', 'assets/horse_144.png', { frameWidth: 144, frameHeight: 144 });
+        this.load.spritesheet('bishop', 'assets/bishop_144.png', { frameWidth: 144, frameHeight: 144 });
+        this.load.spritesheet('queen', 'assets/queen_160.png', { frameWidth: 160, frameHeight: 160 });
     }
 
     create() {
@@ -41,7 +43,7 @@ export class Start extends Phaser.Scene {
 
         // Jogador humano (pertence aos aliados)
         this.player = new HumanPlayer(this, 500, 700);
-        this.alliedPlayers.add(this.player); // agora está no grupo aliado
+        this.alliedPlayers.add(this.player);
 
         this.inputs = new InputManager(this);
 
@@ -56,18 +58,18 @@ export class Start extends Phaser.Scene {
     }
 
     update(time, delta) {
+        // Atualiza estados de entrada (bordas de ataque)
+        this.inputs.update();
+
         const movement = this.inputs.getMovementVector();
-        this.player.update(movement);
+        const attackState = this.inputs.getAttackState();
+
+        this.player.update(movement, attackState);
 
         // Atualiza IA de todos os bots
         this.alliedPlayers.getChildren().forEach(ai => {
             if (ai !== this.player) ai.aiUpdate(time, delta);
         });
         this.enemyPlayers.getChildren().forEach(ai => ai.aiUpdate(time, delta));
-
-        // Ataque do humano (espaço)
-        if (Phaser.Input.Keyboard.JustDown(this.inputs.spaceKey)) {
-            this.player.attack();
-        }
     }
 }

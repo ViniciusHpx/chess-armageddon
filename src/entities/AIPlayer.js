@@ -6,7 +6,13 @@ export default class AIPlayer extends PlayerBase {
         const debugColor = team === 'ally' ? 0x00ff00 : 0xff0000;
         super(scene, x, y, RANKS.PAWN.key, team, debugColor);
 
-        this.setTint(team === 'ally' ? 0x88ff88 : 0xff8888);
+        // Aplica tint conforme o time:
+        // - Aliados: NENHUM tint (mantém a cor original do sprite)
+        // - Inimigos: cinza escuro (0xFBA1AD)
+        if (team === 'enemy') {
+            this.setTint(0xFBA1AD);
+        }
+        // Aliados NÃO recebem tint
 
         this.wanderAngle = Math.random() * Math.PI * 2;
         this.wanderTimer = 0;
@@ -24,6 +30,8 @@ export default class AIPlayer extends PlayerBase {
         this.setVisible(false);
         this.body.enable = false;
 
+        this.resetAura(); // reseta aura ao morrer
+
         this.scene.time.delayedCall(1000, () => this.respawn());
     }
 
@@ -39,6 +47,13 @@ export default class AIPlayer extends PlayerBase {
         this.currentHealth = this.maxHealth;
         this.updateHealthBar();
 
+        // Reaplica o tint ao ressuscitar (importante para inimigos)
+        if (this.team === 'enemy') {
+            this.setTint(0xFBA1AD);
+        } else {
+            this.clearTint(); // garante que aliado não tenha tint
+        }
+
         this.setActive(true);
         this.setVisible(true);
         this.body.enable = true;
@@ -46,6 +61,8 @@ export default class AIPlayer extends PlayerBase {
         this.scene.time.delayedCall(500, () => {
             this._isInvulnerable = false;
         });
+
+        this.resetAura(); // garante aura zerada no respawn
     }
 
     aiUpdate(time, delta) {
@@ -55,7 +72,6 @@ export default class AIPlayer extends PlayerBase {
             return;
         }
 
-        // Movimentação errante
         this.wanderTimer -= delta;
         if (this.wanderTimer <= 0) {
             this.wanderAngle = Math.random() * Math.PI * 2;
@@ -75,7 +91,7 @@ export default class AIPlayer extends PlayerBase {
             this.wanderAngle = -Math.PI / 2;
         }
 
-        const speed = this._currentRank.speed;
+        const speed = this._currentRank.speed * 0.25; // IA se move mais devagar que o jogador PARA FINS DE DEBUG
         const vx = Math.cos(this.wanderAngle) * speed;
         const vy = Math.sin(this.wanderAngle) * speed;
         this.setVelocity(vx, vy);
@@ -83,7 +99,6 @@ export default class AIPlayer extends PlayerBase {
         if (vx < 0) this.setFlipX(true);
         else if (vx > 0) this.setFlipX(false);
 
-        // Decisão de ataque
         this._attackCooldown -= delta;
         if (this._attackCooldown <= 0) {
             const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
