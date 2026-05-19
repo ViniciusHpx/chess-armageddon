@@ -3,19 +3,15 @@ import { RANKS } from '../constants/Hierarchy.js';
 
 export default class AIPlayer extends PlayerBase {
     constructor(scene, x, y, team) {
-        // team = 'ally' ou 'enemy'
-        const debugColor = team === 'ally' ? 0x00ff00 : 0xff0000; // verde / vermelho
+        const debugColor = team === 'ally' ? 0x00ff00 : 0xff0000;
         super(scene, x, y, RANKS.PAWN.key, team, debugColor);
 
-        // Tonalidade para diferenciar visualmente o sprite
         this.setTint(team === 'ally' ? 0x88ff88 : 0xff8888);
 
-        // Estado de movimentação aleatória
         this.wanderAngle = Math.random() * Math.PI * 2;
         this.wanderTimer = 0;
         this.setRandomTimer();
 
-        // Ataque
         this._attackCooldown = 0;
     }
 
@@ -24,12 +20,10 @@ export default class AIPlayer extends PlayerBase {
     }
 
     die() {
-        // Desativa temporariamente, agenda renascimento
         this.setActive(false);
         this.setVisible(false);
         this.body.enable = false;
 
-        // Vida fica zerada até o respawn (para detecção de kill)
         this.scene.time.delayedCall(1000, () => this.respawn());
     }
 
@@ -61,7 +55,7 @@ export default class AIPlayer extends PlayerBase {
             return;
         }
 
-        // Movimentação errante com evasão de bordas
+        // Movimentação errante
         this.wanderTimer -= delta;
         if (this.wanderTimer <= 0) {
             this.wanderAngle = Math.random() * Math.PI * 2;
@@ -102,9 +96,9 @@ export default class AIPlayer extends PlayerBase {
                 }
             }
 
-            if (enemyInRange && Math.random() < 0.02) { // chance por frame (~1.2 ataques/s)
+            if (enemyInRange && Math.random() < 0.02) {
                 this.attack();
-                this._attackCooldown = 2000; // 2 segundos
+                this._attackCooldown = 2000;
             }
         }
 
@@ -113,53 +107,7 @@ export default class AIPlayer extends PlayerBase {
 
     attack() {
         if (this._isAttacking) return;
-        this._isAttacking = true;
-
         const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
-
-        // Mira no inimigo mais próximo
-        let nearest = null;
-        let minDist = Infinity;
-        for (const enemy of enemies.getChildren()) {
-            if (!enemy.active) continue;
-            const dist = Phaser.Math.Distance.Between(this.x, this.y, enemy.x, enemy.y);
-            if (dist < minDist) {
-                minDist = dist;
-                nearest = enemy;
-            }
-        }
-
-        if (nearest) {
-            this.setFlipX(nearest.x < this.x);
-        }
-
-        // Dash
-        this.scene.tweens.add({
-            targets: this,
-            x: this.flipX ? this.x - 30 : this.x + 30,
-            duration: 100,
-            yoyo: true,
-            onComplete: () => this._isAttacking = false
-        });
-
-        this.executeHitCheck(enemies);
-    }
-
-    executeHitCheck(enemyGroup) {
-        const { width, height, offset } = this._currentRank.hitbox;
-        const hitX = this.flipX ? this.x - offset : this.x + offset;
-
-        const zone = this.scene.add.zone(hitX, this.y, width, height);
-        this.scene.physics.add.existing(zone);
-
-        this.scene.physics.overlap(zone, enemyGroup, (z, enemy) => {
-            if (enemy.active && enemy.takeDamage) {
-                enemy.takeDamage(25);
-                if (enemy.currentHealth <= 0) {
-                    this.promote(); // promove só se matar
-                }
-            }
-        });
-        this.scene.time.delayedCall(100, () => zone.destroy());
+        this.performAttack(enemies);
     }
 }

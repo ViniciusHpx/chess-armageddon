@@ -3,42 +3,12 @@ import { RANKS } from '../constants/Hierarchy.js';
 
 export default class HumanPlayer extends PlayerBase {
     constructor(scene, x, y) {
-        super(scene, x, y, RANKS.PAWN.key, 'human', 0xffff00); // elipse amarela
+        super(scene, x, y, RANKS.PAWN.key, 'human', 0xffff00);
     }
 
     attack() {
         if (this._isAttacking) return;
-        this._isAttacking = true;
-
-        this.scene.tweens.add({
-            targets: this,
-            x: this.flipX ? this.x - 30 : this.x + 30,
-            duration: 100,
-            yoyo: true,
-            onComplete: () => this._isAttacking = false
-        });
-
-        this.executeHitCheck();
-    }
-
-    executeHitCheck() {
-        const { width, height, offset } = this._currentRank.hitbox;
-        const hitX = this.flipX ? this.x - offset : this.x + offset;
-
-        const zone = this.scene.add.zone(hitX, this.y, width, height);
-        this.scene.physics.add.existing(zone);
-
-        // Apenas atinge inimigos
-        this.scene.physics.overlap(zone, this.scene.enemyPlayers, (z, enemy) => {
-            if (enemy.active && enemy.takeDamage) {
-                enemy.takeDamage(25);
-                // Promove apenas se matou o inimigo
-                if (enemy.currentHealth <= 0) {
-                    this.promote();
-                }
-            }
-        });
-        this.scene.time.delayedCall(100, () => zone.destroy());
+        this.performAttack(this.scene.enemyPlayers);
     }
 
     die() {
@@ -58,16 +28,22 @@ export default class HumanPlayer extends PlayerBase {
     }
 
     update(movement) {
-        if (this._isAttacking) return;
+        // Movimentação normal apenas se não estiver atacando
+        if (!this._isAttacking) {
+            const { dx, dy } = movement;
+            const speed = this._currentRank.speed;
 
-        const { dx, dy } = movement;
-        const speed = this._currentRank.speed;
+            this.setVelocity(dx * speed, dy * speed);
 
-        this.setVelocity(dx * speed, dy * speed);
+            if (dx !== 0) this.setFlipX(dx < 0);
 
-        if (dx !== 0) this.setFlipX(dx < 0);
+            this.handleVisualEffects(dx, dy);
+        } else {
+            // Durante o ataque, para o personagem (sem velocidade)
+            this.setVelocity(0, 0);
+        }
 
-        this.handleVisualEffects(dx, dy);
+        // Sempre chama commonUpdate para atualizar elipse, barra de vida e ataque visual
         this.commonUpdate();
     }
 
