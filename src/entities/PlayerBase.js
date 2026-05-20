@@ -76,7 +76,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         this.auraEmitter = scene.add.particles(0, 0, textureKey, {
             follow: this,
-            followOffset: { x: 0, y: -10 }, // ligeiro offset para cima para cobrir bem o sprite
+            followOffset: { x: 0, y: -10 },
             speed: { min: 30, max: 80 },
             angle: { min: 0, max: 360 },
             scale: { start: 0.6, end: 0 },
@@ -84,7 +84,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             lifespan: { min: 400, max: 800 },
             frequency: 150,
             blendMode: 'ADD',
-            emitting: false // começa desligado
+            emitting: false
         });
         this.auraEmitter.setDepth(this.y + 99);
         this._auraEmitterActive = false;
@@ -103,7 +103,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         }
 
         if (this.aura > 0) {
-            // Determina a cor baseada nos thresholds
             let auraColor = AURA_THRESHOLDS[0].color;
             for (let i = AURA_THRESHOLDS.length - 1; i >= 0; i--) {
                 if (this.aura >= AURA_THRESHOLDS[i].minAura) {
@@ -114,7 +113,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
             this.auraEmitter.tint = auraColor;
 
-            // Aumenta a frequência conforme a aura sobe
             const maxAuraForFreq = 210;
             const baseFreq = 150;
             const minFreq = 50;
@@ -124,21 +122,16 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     initPhysics() {
-        this.setCollideWorldBounds(true);
-        // O tamanho e offset serão definidos em applyRankPhysics
+        // Desabilitamos a colisão automática com os limites do mundo,
+        // pois agora usaremos clamping manual para manter o sprite inteiro dentro.
+        this.body.setCollideWorldBounds(false);
     }
 
-    /**
-     * Calcula as dimensões da elipse de colisão com base no tamanho do personagem
-     * e atualiza o corpo físico para que seu centro coincida com os pés.
-     * MODIFICAÇÃO: O centro da elipse agora é deslocado para cima pelo valor de collisionRx
-     */
     applyRankPhysics(rankConfig) {
         if (!this.body) return;
 
         const size = rankConfig.size;
 
-        // Escala proporcional ao sprite original (128×128 → rx=50, ry=25)
         const baseRX = 50;
         const baseRY = 25;
         const baseW = 128;
@@ -149,13 +142,11 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.collisionRx = baseRX * scaleX;
         this.collisionRy = baseRY * scaleY;
 
-        // Posição do centro da elipse: pés do personagem SUBINDO pelo collisionRx
-        const feetX = size.width / 2;          // centro horizontal relativo ao sprite
-        const feetY = size.height;             // base (pés) relativo ao sprite
-        
-        // AQUI ESTÁ A MODIFICAÇÃO: subimos o centro da elipse pelo valor de collisionRx
+        const feetX = size.width / 2;
+        const feetY = size.height;
+
         const offsetX = feetX - this.collisionRx;
-        const offsetY = (feetY - this.collisionRx) + (this.collisionRy / 3); // subindo pelo collisionRx
+        const offsetY = (feetY - this.collisionRx) + (this.collisionRy / 3);
 
         this.body.setSize(this.collisionRx * 2, this.collisionRy * 2);
         this.body.setOffset(offsetX, offsetY);
@@ -163,7 +154,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     promote() {
         const nextRankKey = this._currentRank.next;
-        if (!nextRankKey) return; // rainha não promove
+        if (!nextRankKey) return;
         this.setRank(RANKS[nextRankKey]);
 
         this.maxHealth = this._currentRank.health;
@@ -184,9 +175,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.setRank(RANKS.PAWN);
     }
 
-    /**
-     * Aplica dano. Retorna true se a entidade morreu.
-     */
     takeDamage(amount) {
         if (this._isInvulnerable) return false;
 
@@ -206,7 +194,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     die() {
-        // Será sobrescrito pelas subclasses
         this.resetToPawn();
         this.maxHealth = RANKS.PAWN.health;
         this.currentHealth = this.maxHealth;
@@ -233,9 +220,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.createHealthBar();
     }
 
-    /**
-     * Desenha a elipse de debug (hitbox) na posição correta do corpo físico.
-     */
     drawDebugHitbox() {
         this.debugGraphics.clear();
         const center = this.getEllipseCenter();
@@ -265,7 +249,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             this.debugGraphics.strokeEllipse(center.x, center.y, innerRx * 2, innerRy * 2);
         }
 
-        // Preenchimento leve para visualização
         this.debugGraphics.fillStyle(this.debugColor, 0.08);
         this.debugGraphics.fillEllipse(center.x, center.y, rx * 2, ry * 2);
     }
@@ -274,25 +257,16 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.setTexture(skinKey);
     }
 
-    /**
-     * Adiciona aura ao matar um inimigo, baseado no rank dele.
-     */
     addAuraFromKill(enemy) {
         const rankKey = enemy._currentRank.key;
         const auraValue = AURA_KILL_VALUES[rankKey] || 10;
         this.aura += auraValue;
     }
 
-    /**
-     * Reseta a aura para 0 (morte / respawn).
-     */
     resetAura() {
         this.aura = 0;
     }
 
-    /**
-     * Brilho do indicador de carga – cor transita de branco a vermelho conforme o progresso.
-     */
     drawChargeGlow() {
         this.chargeGlowGraphics.clear();
         if (!this._isCharging) return;
@@ -302,7 +276,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const x = this.x + offsetX;
         const y = this.y + offsetY;
 
-        // Interpola entre branco (255,255,255) e vermelho puro (255,0,0)
         const ratio = Phaser.Math.Clamp(this._chargeRatio, 0, 1);
         const r = 255;
         const g = Phaser.Math.Linear(255, 0, ratio);
@@ -324,7 +297,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         this.drawDebugHitbox();
         this.updateHealthBar();
-        this.updateAuraVisual();      // substitui o antigo drawAura()
+        this.updateAuraVisual();
         this.drawChargeGlow();
 
         if (this._isAttacking && this._attackEnemyGroup) {
@@ -332,19 +305,27 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    /**
+     * Mantém o sprite inteiro dentro dos limites do mundo.
+     * Deve ser chamado após a simulação física (ex.: no evento 'postupdate' da cena).
+     */
+    clampToWorldBounds() {
+        const bounds = this.scene.physics.world.bounds;
+        const halfW = this.displayWidth / 2;
+        const halfH = this.displayHeight / 2;
+
+        this.x = Phaser.Math.Clamp(this.x, bounds.x + halfW, bounds.right - halfW);
+        this.y = Phaser.Math.Clamp(this.y, bounds.y + halfH, bounds.bottom - halfH);
+    }
+
     // -------------------------------------------------------------------
-    // SISTEMA DE ATAQUE (normal e carregado)
+    // SISTEMA DE ATAQUE
     // -------------------------------------------------------------------
 
-    /**
-     * Retorna o centro da elipse de colisão.
-     * Se o corpo físico não estiver ativo, calcula a posição dos pés manualmente.
-     */
     getEllipseCenter() {
         if (this.body && this.body.enable) {
             return { x: this.body.center.x, y: this.body.center.y };
         }
-        // Fallback: centro horizontal = x, pés = y + metade da altura do sprite
         return {
             x: this.x,
             y: this.y + this.displayHeight / 2
@@ -559,10 +540,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             }
         }
     }
-
-    // ---------------------------------------------------------------
-    // MÉTODOS ESTÁTICOS DE COLISÃO GEOMÉTRICA
-    // ---------------------------------------------------------------
 
     static ellipseContainsPoint(px, py, cx, cy, rx, ry) {
         const dx = px - cx;

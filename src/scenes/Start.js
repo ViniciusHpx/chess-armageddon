@@ -15,7 +15,6 @@ export class Start extends Phaser.Scene {
     }
 
     create() {
-        // Gera a textura da partícula da aura (usada por todos os players)
         if (!this.textures.exists('aura-particle')) {
             const size = 8;
             const canvas = this.textures.createCanvas('aura-particle', size, size);
@@ -67,10 +66,15 @@ export class Start extends Phaser.Scene {
         this.physics.add.collider(this.alliedPlayers, this.enemyPlayers);
         this.physics.add.collider(this.alliedPlayers, this.alliedPlayers);
         this.physics.add.collider(this.enemyPlayers, this.enemyPlayers);
+
+        // Garante que todos os personagens fiquem dentro do mundo após a física
+        this.events.on('postupdate', () => {
+            this.alliedPlayers.getChildren().forEach(p => p.clampToWorldBounds());
+            this.enemyPlayers.getChildren().forEach(p => p.clampToWorldBounds());
+        });
     }
 
     update(time, delta) {
-        // Atualiza estados de entrada (bordas de ataque)
         this.inputs.update();
 
         const movement = this.inputs.getMovementVector();
@@ -78,7 +82,6 @@ export class Start extends Phaser.Scene {
 
         this.player.update(movement, attackState);
 
-        // Atualiza IA de todos os bots
         this.alliedPlayers.getChildren().forEach(ai => {
             if (ai !== this.player) ai.aiUpdate(time, delta);
         });
