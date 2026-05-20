@@ -25,6 +25,7 @@ export default class HumanPlayer extends PlayerBase {
         this._isCharging = true;
         this._chargeStartTime = this.scene.time.now;
         this._chargeComplete = false;
+        this._chargeRatio = 0; // reseta o progresso visual
     }
 
     /**
@@ -45,6 +46,7 @@ export default class HumanPlayer extends PlayerBase {
         // Finaliza a carga
         this._isCharging = false;
         this._chargeComplete = false;
+        this._chargeRatio = 0; // limpa o indicador
     }
 
     /**
@@ -53,6 +55,9 @@ export default class HumanPlayer extends PlayerBase {
     updateCharge() {
         if (!this._isCharging) return;
         const elapsed = this.scene.time.now - this._chargeStartTime;
+        const ratio = Phaser.Math.Clamp(elapsed / this._currentRank.chargeTime, 0, 1);
+        this._chargeRatio = ratio; // atualiza a cor do brilho
+
         if (elapsed >= this._currentRank.chargeTime) {
             this._chargeComplete = true;
             // O brilho já está ativo, pode-se adicionar som ou outro feedback
@@ -85,6 +90,7 @@ export default class HumanPlayer extends PlayerBase {
         // Cancela qualquer carga em andamento
         this._isCharging = false;
         this._chargeComplete = false;
+        this._chargeRatio = 0;
     }
 
     update(movement, attackState) {

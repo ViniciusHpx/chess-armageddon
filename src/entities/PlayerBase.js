@@ -25,10 +25,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.attackGraphics = this.scene.add.graphics();
         this.attackGraphics.setDepth(1000);
 
-        // Aura visual
-        this.auraGraphics = this.scene.add.graphics();
-        this.auraGraphics.setDepth(999);
-
         // Brilho de carga (canto superior direito)
         this.chargeGlowGraphics = this.scene.add.graphics();
         this.chargeGlowGraphics.setDepth(1001);
@@ -47,14 +43,84 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         // Flag visual de carga (usado pela subclasse humana)
         this._isCharging = false;
+        this._chargeRatio = 0; // 0 a 1, progresso da carga
 
         // Propriedades da elipse de colisão (definidas por applyRankPhysics)
         this.collisionRx = 50;
         this.collisionRy = 25;
 
+        // Inicializa o emissor de partículas da aura (se ainda não existir a textura)
+        this._createAuraEmitter();
+
         // Configura o corpo físico com a elipse inicial
         this.initPhysics();
         this.applyRankPhysics(this._currentRank);
+    }
+
+    /**
+     * Cria (ou recicla) a textura da partícula da aura e adiciona o emissor.
+     */
+    _createAuraEmitter() {
+        const scene = this.scene;
+        const textureKey = 'aura-particle';
+        if (!scene.textures.exists(textureKey)) {
+            const size = 8;
+            const canvas = scene.textures.createCanvas(textureKey, size, size);
+            const ctx = canvas.getContext();
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            canvas.refresh();
+        }
+
+        this.auraEmitter = scene.add.particles(0, 0, textureKey, {
+            follow: this,
+            followOffset: { x: 0, y: -10 }, // ligeiro offset para cima para cobrir bem o sprite
+            speed: { min: 30, max: 80 },
+            angle: { min: 0, max: 360 },
+            scale: { start: 0.6, end: 0 },
+            alpha: { start: 0.7, end: 0 },
+            lifespan: { min: 400, max: 800 },
+            frequency: 150,
+            blendMode: 'ADD',
+            emitting: false // começa desligado
+        });
+        this.auraEmitter.setDepth(this.y + 99);
+        this._auraEmitterActive = false;
+    }
+
+    /**
+     * Atualiza o emissor de partículas da aura com cor e taxa conforme o nível.
+     */
+    updateAuraVisual() {
+        if (this.aura > 0 && !this._auraEmitterActive) {
+            this.auraEmitter.start();
+            this._auraEmitterActive = true;
+        } else if (this.aura <= 0 && this._auraEmitterActive) {
+            this.auraEmitter.stop();
+            this._auraEmitterActive = false;
+        }
+
+        if (this.aura > 0) {
+            // Determina a cor baseada nos thresholds
+            let auraColor = AURA_THRESHOLDS[0].color;
+            for (let i = AURA_THRESHOLDS.length - 1; i >= 0; i--) {
+                if (this.aura >= AURA_THRESHOLDS[i].minAura) {
+                    auraColor = AURA_THRESHOLDS[i].color;
+                    break;
+                }
+            }
+
+            this.auraEmitter.tint = auraColor;
+
+            // Aumenta a frequência conforme a aura sobe
+            const maxAuraForFreq = 210;
+            const baseFreq = 150;
+            const minFreq = 50;
+            const ratio = Phaser.Math.Clamp(this.aura / maxAuraForFreq, 0, 1);
+            this.auraEmitter.frequency = Phaser.Math.Linear(baseFreq, minFreq, ratio);
+        }
     }
 
     initPhysics() {
@@ -225,35 +291,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Desenha o efeito de aura de acordo com o nível atual.
-     */
-    drawAura() {
-        this.auraGraphics.clear();
-        if (this.aura <= 0) return;
-
-        let auraColor = AURA_THRESHOLDS[0].color;
-        for (let i = AURA_THRESHOLDS.length - 1; i >= 0; i--) {
-            if (this.aura >= AURA_THRESHOLDS[i].minAura) {
-                auraColor = AURA_THRESHOLDS[i].color;
-                break;
-            }
-        }
-
-        const baseRadius = 30;
-        const maxExtraRadius = 40;
-        const maxAuraForSize = 210;
-        const extraRadius = Math.min(this.aura, maxAuraForSize) / maxAuraForSize * maxExtraRadius;
-        const radius = baseRadius + extraRadius;
-
-        const center = this.getEllipseCenter();
-        this.auraGraphics.fillStyle(auraColor, 0.15);
-        this.auraGraphics.fillCircle(center.x, center.y, radius);
-        this.auraGraphics.lineStyle(2, auraColor, 0.6);
-        this.auraGraphics.strokeCircle(center.x, center.y, radius);
-    }
-
-    /**
-     * Brilho vermelho enquanto está carregando o ataque.
+     * Brilho do indicador de carga – cor transita de branco a vermelho conforme o progresso.
      */
     drawChargeGlow() {
         this.chargeGlowGraphics.clear();
@@ -264,9 +302,16 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const x = this.x + offsetX;
         const y = this.y + offsetY;
 
-        this.chargeGlowGraphics.fillStyle(0xff0000, 0.9);
+        // Interpola entre branco (255,255,255) e vermelho puro (255,0,0)
+        const ratio = Phaser.Math.Clamp(this._chargeRatio, 0, 1);
+        const r = 255;
+        const g = Phaser.Math.Linear(255, 0, ratio);
+        const b = Phaser.Math.Linear(255, 0, ratio);
+        const color = Phaser.Display.Color.GetColor(r, g, b);
+
+        this.chargeGlowGraphics.fillStyle(color, 0.9);
         this.chargeGlowGraphics.fillCircle(x, y, 8);
-        this.chargeGlowGraphics.lineStyle(1, 0xff6666, 1);
+        this.chargeGlowGraphics.lineStyle(1, color, 1);
         this.chargeGlowGraphics.strokeCircle(x, y, 8);
     }
 
@@ -274,12 +319,12 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.setDepth(this.y);
         this.debugGraphics.setDepth(this.y - 1);
         this.healthBar.setDepth(this.y + 100);
-        this.auraGraphics.setDepth(this.y + 99);
+        this.auraEmitter.setDepth(this.y + 99);
         this.chargeGlowGraphics.setDepth(this.y + 101);
 
         this.drawDebugHitbox();
         this.updateHealthBar();
-        this.drawAura();
+        this.updateAuraVisual();      // substitui o antigo drawAura()
         this.drawChargeGlow();
 
         if (this._isAttacking && this._attackEnemyGroup) {
@@ -435,7 +480,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
                 for (const enemy of enemyGroup.getChildren()) {
                     if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
                     const enemyCenter = enemy.getEllipseCenter();
-                    // CORREÇÃO: passar enemyCenter.x e enemyCenter.y separadamente
                     if (PlayerBase.rectangleOverlapsEllipse(rect, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy)) {
                         this.applyDamageToEnemy(enemy, damage);
                     }
@@ -494,7 +538,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
                 for (const enemy of enemyGroup.getChildren()) {
                     if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
                     const enemyCenter = enemy.getEllipseCenter();
-                    // CORREÇÃO: passar enemyCenter.x e enemyCenter.y separadamente
                     if (PlayerBase.rectangleOverlapsEllipse(forwardRect, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy) ||
                         PlayerBase.rectangleOverlapsEllipse(sideRect, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy)) {
                         this.applyDamageToEnemy(enemy, damage);
@@ -518,13 +561,12 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     // ---------------------------------------------------------------
-    // MÉTODOS ESTÁTICOS DE COLISÃO GEOMÉTRICA (usam a elipse do alvo)
+    // MÉTODOS ESTÁTICOS DE COLISÃO GEOMÉTRICA
     // ---------------------------------------------------------------
 
     static ellipseContainsPoint(px, py, cx, cy, rx, ry) {
         const dx = px - cx;
         const dy = py - cy;
-        // pequena tolerância (0.001) para bordas
         return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.001;
     }
 
@@ -549,11 +591,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         return dist <= radius + ellipseRadius;
     }
 
-    /**
-     * Verifica sobreposição entre um losango (diamond) centrado em (dCx, dCy)
-     * com "radius" (distância do centro a cada vértice) e uma elipse (alvo).
-     * Usa a equivalência |dx+dy| ≤ r && |dx-dy| ≤ r.
-     */
     static diamondOverlapsEllipse(dCx, dCy, radius, eCx, eCy, rx, ry) {
         if (rx <= 0 || ry <= 0) return false;
         const dx = eCx - dCx;
@@ -561,23 +598,18 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const u = dx + dy;
         const v = dx - dy;
 
-        // Teste rápido: se o centro da elipse já está dentro do losango
         if (Math.abs(u) <= radius && Math.abs(v) <= radius) {
             return true;
         }
 
-        // Encontra o ponto mais próximo do losango ao centro da elipse
         const closestU = Phaser.Math.Clamp(u, -radius, radius);
         const closestV = Phaser.Math.Clamp(v, -radius, radius);
 
-        // Converte de volta para coordenadas originais
         const closestX = (closestU + closestV) / 2 + dCx;
         const closestY = (closestU - closestV) / 2 + dCy;
 
         return PlayerBase.ellipseContainsPoint(closestX, closestY, eCx, eCy, rx, ry);
     }
-
-    // ---------------------------------------------------------------
 
     applyDamageToEnemy(enemy, damage) {
         this._attackHitEnemies.add(enemy);

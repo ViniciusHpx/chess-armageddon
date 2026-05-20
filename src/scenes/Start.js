@@ -15,6 +15,18 @@ export class Start extends Phaser.Scene {
     }
 
     create() {
+        // Gera a textura da partícula da aura (usada por todos os players)
+        if (!this.textures.exists('aura-particle')) {
+            const size = 8;
+            const canvas = this.textures.createCanvas('aura-particle', size, size);
+            const ctx = canvas.getContext();
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            canvas.refresh();
+        }
+
         const mapWidth = 3548;
         const mapHeight = 1774;
 
