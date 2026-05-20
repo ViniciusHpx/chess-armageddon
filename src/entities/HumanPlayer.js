@@ -101,7 +101,7 @@ export default class HumanPlayer extends PlayerBase {
         }
 
         // Movimentação (bloqueada durante ataque ou carga)
-        if (!this._isAttacking && !this._isCharging) {
+        if (!this._isAttacking) {
             const { dx, dy } = movement;
             const speed = this._currentRank.speed;
 
@@ -111,7 +111,6 @@ export default class HumanPlayer extends PlayerBase {
 
             this.handleVisualEffects(dx, dy);
         } else {
-            this.setVelocity(0, 0);
             if (this.wasWalking) {
                 this.stopWalkEffect();
                 this.wasWalking = false;
