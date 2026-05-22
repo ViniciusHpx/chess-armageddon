@@ -67,41 +67,72 @@ export default class AIPlayer extends PlayerBase {
 
     aiUpdate(time, delta) {
         if (!this.active) return;
+
+        // Durante o ataque, apenas mantém os visuais e não altera o movimento
         if (this._isAttacking) {
             this.commonUpdate();
             return;
         }
 
-        this.wanderTimer -= delta;
-        if (this.wanderTimer <= 0) {
-            this.wanderAngle = Math.random() * Math.PI * 2;
-            this.setRandomTimer();
+        // Define o grupo de inimigos (adversários)
+        const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
+
+        // --- LÓGICA DE PERSEGUIÇÃO AO INIMIGO MAIS PRÓXIMO ---
+        let nearestEnemy = null;
+        let nearestDist = Infinity;
+
+        for (const enemy of enemies.getChildren()) {
+            if (!enemy.active) continue;
+            const dist = Phaser.Math.Distance.Between(this.x, this.y, enemy.x, enemy.y);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearestEnemy = enemy;
+            }
         }
 
+        let moveAngle;
         const margin = 100;
         const bounds = this.scene.physics.world.bounds;
-        if (this.x < margin) {
-            this.wanderAngle = 0;
-        } else if (this.x > bounds.width - margin) {
-            this.wanderAngle = Math.PI;
-        }
-        if (this.y < margin) {
-            this.wanderAngle = Math.PI / 2;
-        } else if (this.y > bounds.height - margin) {
-            this.wanderAngle = -Math.PI / 2;
+
+        if (nearestEnemy) {
+            // Ângulo em direção ao inimigo
+            moveAngle = Phaser.Math.Angle.Between(this.x, this.y, nearestEnemy.x, nearestEnemy.y);
+        } else {
+            // Nenhum inimigo ativo → mantém o comportamento de vagar
+            this.wanderTimer -= delta;
+            if (this.wanderTimer <= 0) {
+                this.wanderAngle = Math.random() * Math.PI * 2;
+                this.setRandomTimer();
+            }
+            moveAngle = this.wanderAngle;
         }
 
-        const speed = this._currentRank.speed * 0.25; // IA se move mais devagar que o jogador PARA FINS DE DEBUG
-        const vx = Math.cos(this.wanderAngle) * speed;
-        const vy = Math.sin(this.wanderAngle) * speed;
+        // --- EVASÃO DE BORDAS (evita que saiam do mapa) ---
+        if (this.x < margin && Math.cos(moveAngle) < 0) {
+            moveAngle = 0; // força ir para direita
+        } else if (this.x > bounds.width - margin && Math.cos(moveAngle) > 0) {
+            moveAngle = Math.PI; // força ir para esquerda
+        }
+
+        if (this.y < margin && Math.sin(moveAngle) < 0) {
+            moveAngle = Math.PI / 2; // força ir para baixo
+        } else if (this.y > bounds.height - margin && Math.sin(moveAngle) > 0) {
+            moveAngle = -Math.PI / 2; // força ir para cima
+        }
+
+        // Aplica velocidade reduzida (25% do speed do rank, conforme original)
+        const speed = this._currentRank.speed * 0.25;
+        const vx = Math.cos(moveAngle) * speed;
+        const vy = Math.sin(moveAngle) * speed;
         this.setVelocity(vx, vy);
 
+        // Orientação do sprite durante o movimento
         if (vx < 0) this.setFlipX(true);
         else if (vx > 0) this.setFlipX(false);
 
+        // --- LÓGICA DE ATAQUE (MANTIDA COMO ESTAVA) ---
         this._attackCooldown -= delta;
         if (this._attackCooldown <= 0) {
-            const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
             let enemyInRange = false;
             for (const enemy of enemies.getChildren()) {
                 if (!enemy.active) continue;
@@ -123,6 +154,23 @@ export default class AIPlayer extends PlayerBase {
     attack() {
         if (this._isAttacking) return;
         const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
+
+        // Garante que o bot ataque virado para o inimigo mais próximo
+        let closestEnemy = null;
+        let closestDist = Infinity;
+        for (const enemy of enemies.getChildren()) {
+            if (!enemy.active) continue;
+            const dist = Phaser.Math.Distance.Between(this.x, this.y, enemy.x, enemy.y);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closestEnemy = enemy;
+            }
+        }
+
+        if (closestEnemy) {
+            this.setFlipX(closestEnemy.x < this.x);
+        }
+
         this.performAttack(enemies);
     }
 }
