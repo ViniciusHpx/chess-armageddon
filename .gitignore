@@ -1,6 +1,9 @@
 # IA e Configurações Locais
 .claude/
 .prompt_history/
+.vscode/
 
 # Arquivos de log ou temporários que possam surgir no histórico
 .prompt_history/*.txt
+
+prompt_generator.ipynb
