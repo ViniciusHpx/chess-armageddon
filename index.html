@@ -43,7 +43,14 @@
     </head>
     <body>
         <div id="game-container"></div>
+        <!--
+            Ambos são vendorizados e expõem globais (Phaser, Colyseus). Os
+            módulos de src/ os consomem sem import, como já era o caso do Phaser.
+            colyseus.js é cópia de
+            chess-armageddon-server/node_modules/@colyseus/sdk/dist/colyseus.js
+        -->
         <script src="./phaser.js"></script>
+        <script src="./colyseus.js"></script>
         <script type="module" src="./src/main.js"></script>
     </body>
     </html>

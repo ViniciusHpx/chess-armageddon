@@ -1,6 +1,8 @@
 import HumanPlayer from '../entities/HumanPlayer.js';
 import AIPlayer from '../entities/AIPlayer.js';
 import InputManager from '../utils/InputManager.js';
+import CollisionResolver from '../utils/CollisionResolver.js';
+import DeathScreen from '../ui/DeathScreen.js';
 
 export class Start extends Phaser.Scene {
     preload() {
@@ -58,17 +60,23 @@ export class Start extends Phaser.Scene {
 
         this.inputs = new InputManager(this);
 
+        // Tela de morte (criada depois do InputManager para ficar acima da UI)
+        this.deathScreen = new DeathScreen(this);
+
         // Câmera
         this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
         this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
 
-        // Colisões entre times (sem dano por toque)
-        this.physics.add.collider(this.alliedPlayers, this.enemyPlayers);
-        this.physics.add.collider(this.alliedPlayers, this.alliedPlayers);
-        this.physics.add.collider(this.enemyPlayers, this.enemyPlayers);
+        // Colisão entre personagens (sem dano por toque). Não usamos
+        // `physics.add.collider` porque o corpo Arcade é retangular: a
+        // separação real é feita sobre as elipses, em CollisionResolver.
+        this.collisionResolver = new CollisionResolver(this, [this.alliedPlayers, this.enemyPlayers]);
 
-        // Garante que todos os personagens fiquem dentro do mundo após a física
         this.events.on('postupdate', () => {
+            // Ordem importa: separa os personagens e só depois prende ao mapa,
+            // para que o clamp continue sendo a última palavra sobre a posição.
+            this.collisionResolver.update();
+
             this.alliedPlayers.getChildren().forEach(p => p.clampToWorldBounds());
             this.enemyPlayers.getChildren().forEach(p => p.clampToWorldBounds());
         });
@@ -80,7 +88,7 @@ export class Start extends Phaser.Scene {
         const movement = this.inputs.getMovementVector();
         const attackState = this.inputs.getAttackState();
 
-        this.player.update(movement, attackState);
+        if (!this.player._isDead) this.player.update(movement, attackState);
 
         this.alliedPlayers.getChildren().forEach(ai => {
             if (ai !== this.player) ai.aiUpdate(time, delta);

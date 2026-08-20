@@ -1,3 +1,10 @@
+/**
+ * ATENÇÃO: no modo online quem manda é
+ * `chess-armageddon-server/src/sim/constants.ts`. Este arquivo é a cópia que o
+ * cliente usa para DESENHAR (textura, tamanho, forma do golpe) e para rodar o
+ * modo offline (cena `Start`). Se um número mudar lá, espelhe aqui — senão o
+ * golpe acerta fora do que aparece na tela.
+ */
 export const RANKS = {
     PAWN: {
         key: 'pawn',
@@ -5,6 +12,7 @@ export const RANKS = {
         size: { width: 128, height: 128 },
         hitbox: { width: 128/2, height: 128/2 },
         health: 100,
+        mass: 1,
         attack: {
             type: 'rectangle',
             length: 80,
@@ -19,6 +27,7 @@ export const RANKS = {
         size: { width: 160, height: 160 },
         hitbox: { width: 160/2, height: 160/2 },
         health: 200,
+        mass: 4,
         attack: {
             type: 'circle',
             radius: 120
@@ -32,6 +41,7 @@ export const RANKS = {
         size: { width: 144, height: 144 },
         hitbox: { width: 144/2, height: 144/2 },
         health: 125,
+        mass: 1.6,
         attack: {
             type: 'lshape',
             forwardLength: 80,
@@ -47,6 +57,7 @@ export const RANKS = {
         size: { width: 144, height: 144 },
         hitbox: { width: 144/2, height: 144/2 },
         health: 150,
+        mass: 1.8,
         attack: {
             type: 'diamond',
             radius: 100
@@ -60,6 +71,7 @@ export const RANKS = {
         size: { width: 160, height: 160 },
         hitbox: { width: 160/2, height: 160/2 },
         health: 200,
+        mass: 3,
         attack: {
             type: 'circle',
             radius: 150
@@ -87,3 +99,12 @@ export const AURA_THRESHOLDS = [
     { minAura: 150, color: 0x800080 }, // roxo
     { minAura: 210, color: 0xdc143c }  // vinho (crimson)
 ];
+/**
+ * Ordem dos ranks tal como o servidor a envia no campo `rank` (uint8).
+ * A ordem NÃO pode mudar sem mudar `RANK_ORDER` no servidor junto.
+ */
+export const RANK_ORDER = ['PAWN', 'TOWER', 'HORSE', 'BISHOP', 'QUEEN'];
+
+/** Dimensões do mapa. Espelha WORLD_WIDTH/WORLD_HEIGHT do servidor. */
+export const WORLD_WIDTH = 3548;
+export const WORLD_HEIGHT = 1774;

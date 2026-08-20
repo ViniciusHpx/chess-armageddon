@@ -9,6 +9,9 @@ export default class HumanPlayer extends PlayerBase {
         this._isCharging = false;
         this._chargeStartTime = 0;
         this._chargeComplete = false;
+
+        // Morto: aguardando o clique em RENASCER na tela de morte
+        this._isDead = false;
     }
 
     // Ataque normal (usado quando o botão é apenas pressionado sem carga completa)
@@ -71,29 +74,63 @@ export default class HumanPlayer extends PlayerBase {
     }
 
     die() {
+        this._isDead = true;
+
+        // Cancela ataque e carga em andamento
+        this.finishAttack();
+        this._isCharging = false;
+        this._chargeComplete = false;
+        this._chargeRatio = 0;
+
+        this.stopWalkEffect();
+        this.wasWalking = false;
+        this.setVelocity(0, 0);
+
+        this.resetAura();
+        this.auraEmitter.stop();
+        this._auraEmitterActive = false;
+
+        // Some do mundo: inativo é ignorado pela IA e pelo CollisionResolver
+        this.setActive(false);
+        this.setVisible(false);
+        this.body.enable = false;
+        this.setVisualsVisible(false);
+
+        this.scene.cameras.main.shake(200, 0.01);
+
+        this.scene.deathScreen.show(() => this.respawn());
+    }
+
+    /**
+     * Renasce como peão no centro do mapa (acionado pelo botão da tela de morte).
+     */
+    respawn() {
         this.resetToPawn();
         this.maxHealth = RANKS.PAWN.health;
         this.currentHealth = this.maxHealth;
-        this.updateHealthBar();
-
-        this.resetAura(); // reseta aura ao morrer
 
         this.setPosition(640, 360);
+        this.setVelocity(0, 0);
 
-        this.scene.cameras.main.shake(200, 0.01);
+        this.setActive(true);
+        this.setVisible(true);
+        this.body.enable = true;
+        this.body.updateFromGameObject();
+        this.setVisualsVisible(true);
+        this.updateHealthBar();
+
+        this._isDead = false;
 
         this._isInvulnerable = true;
         this.scene.time.delayedCall(1000, () => {
             this._isInvulnerable = false;
         });
-
-        // Cancela qualquer carga em andamento
-        this._isCharging = false;
-        this._chargeComplete = false;
-        this._chargeRatio = 0;
     }
 
     update(movement, attackState) {
+        // Morto: ignora entrada até renascer
+        if (this._isDead) return;
+
         // Entrada de ataque
         if (attackState.justPressed) {
             this.startCharging();

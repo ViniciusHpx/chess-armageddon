@@ -288,6 +288,19 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.chargeGlowGraphics.strokeCircle(x, y, 8);
     }
 
+    /**
+     * Liga/desliga todos os Graphics e o emissor de aura da entidade.
+     * Necessário ao esconder o personagem (morte), pois cada Graphics guarda
+     * o último desenho e continuaria visível mesmo com o sprite invisível.
+     */
+    setVisualsVisible(visible) {
+        this.healthBar.setVisible(visible);
+        this.debugGraphics.setVisible(visible);
+        this.attackGraphics.setVisible(visible);
+        this.chargeGlowGraphics.setVisible(visible);
+        this.auraEmitter.setVisible(visible);
+    }
+
     commonUpdate() {
         this.setDepth(this.y);
         this.debugGraphics.setDepth(this.y - 1);
@@ -332,6 +345,14 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         };
     }
 
+    /**
+     * Peso usado pelo CollisionResolver: quanto maior, menos o personagem é
+     * empurrado por quem esbarra nele.
+     */
+    getCollisionMass() {
+        return this._currentRank.mass || 1;
+    }
+
     performAttack(enemyGroup) {
         if (this._isAttacking) return;
         this._isAttacking = true;
@@ -339,7 +360,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._attackEnemyGroup = enemyGroup;
 
         this.scene.time.delayedCall(200, () => {
-            this.executeAttackHit(enemyGroup);
+            // Pode ter morrido/sido desativado durante o delay
+            if (this.active) this.executeAttackHit(enemyGroup);
             this.finishAttack();
         });
     }
