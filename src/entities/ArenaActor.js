@@ -1,4 +1,4 @@
-import { RANKS, RANK_ORDER, AURA_THRESHOLDS } from '../constants/Hierarchy.js';
+import { RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, skinKey } from '../constants/Hierarchy.js';
 
 /**
  * Personagem no modo ONLINE: só desenho.
@@ -20,7 +20,7 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
      */
     constructor(scene, actorState, isLocal, isOpponent) {
         const rank = RANKS[RANK_ORDER[actorState.rank]];
-        super(scene, actorState.x, actorState.y, rank.key);
+        super(scene, actorState.x, actorState.y, skinKey(rank.key, TEAM_ORDER[actorState.team]));
 
         scene.add.existing(this);
 
@@ -29,7 +29,7 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         this.isOpponent = isOpponent;
 
         this._rankKey = RANK_ORDER[actorState.rank];
-        this.debugColor = isLocal ? 0xffff00 : (isOpponent ? 0xff0000 : 0x00ff00);
+        this.applyDebugColor();
 
         this.healthBar = scene.add.graphics();
         this.debugGraphics = scene.add.graphics();
@@ -67,11 +67,20 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         this.renderY = actorState.y;
 
         this.applyRank();
-        this.applyTeamTint();
     }
 
     get rank() {
         return RANKS[this._rankKey];
+    }
+
+    /**
+     * Time absoluto (`'ally'` / `'enemy'`), como o servidor o define. É ele que
+     * escolhe a cor da peça — e não `isOpponent`, que é relativo a quem olha:
+     * com o relativo, dois jogadores do mesmo time se veriam claros enquanto um
+     * terceiro veria os dois escuros.
+     */
+    get team() {
+        return TEAM_ORDER[this.actorState.team];
     }
 
     get collisionRx() {
@@ -94,13 +103,12 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
     }
 
     applyRank() {
-        this.setTexture(this.rank.key);
+        this.setTexture(skinKey(this.rank.key, this.team));
     }
 
-    /** Adversários levam tint rosado; o time do jogador local fica natural. */
-    applyTeamTint() {
-        if (this.isOpponent) this.setTint(0xFBA1AD);
-        else this.clearTint();
+    /** Moldura de debug: amarelo eu, verde meu time, vermelho o adversário. */
+    applyDebugColor() {
+        this.debugColor = this.isLocal ? 0xffff00 : (this.isOpponent ? 0xff0000 : 0x00ff00);
     }
 
     // -----------------------------------------------------------------------
@@ -119,10 +127,9 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         if (rankKey !== this._rankKey) {
             this._rankKey = rankKey;
             this.applyRank();
-            this.applyTeamTint();
             // Piscada verde na promoção (era `promote()` no offline).
             this.setTintFill(0x00ff00);
-            this.scene.time.delayedCall(120, () => this.applyTeamTint());
+            this.scene.time.delayedCall(120, () => this.clearTint());
         }
 
         if (!s.alive) {

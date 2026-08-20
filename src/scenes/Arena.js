@@ -48,6 +48,13 @@ export class Arena extends Phaser.Scene {
         this.load.spritesheet('horse', 'assets/horse_144.png', { frameWidth: 144, frameHeight: 144 });
         this.load.spritesheet('bishop', 'assets/bishop_144.png', { frameWidth: 144, frameHeight: 144 });
         this.load.spritesheet('queen', 'assets/queen_160.png', { frameWidth: 160, frameHeight: 160 });
+
+        // Peças escuras: o time `enemy` as veste (ver `skinKey` em Hierarchy.js).
+        this.load.spritesheet('pawn_black', 'assets/pawn_128_b.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('tower_black', 'assets/tower_160_b.png', { frameWidth: 160, frameHeight: 160 });
+        this.load.spritesheet('horse_black', 'assets/horse_144_b.png', { frameWidth: 144, frameHeight: 144 });
+        this.load.spritesheet('bishop_black', 'assets/bishop_144_b.png', { frameWidth: 144, frameHeight: 144 });
+        this.load.spritesheet('queen_black', 'assets/queen_160_b.png', { frameWidth: 160, frameHeight: 160 });
     }
 
     create() {
@@ -193,7 +200,7 @@ export class Arena extends Phaser.Scene {
                 this.predX = actorState.x;
                 this.predY = actorState.y;
                 this.predReady = true;
-                this.refreshTints();
+                this.refreshDebugColors();
             }
         });
 
@@ -220,11 +227,15 @@ export class Arena extends Phaser.Scene {
         return this.localTeam !== null && actorState.team !== this.localTeam;
     }
 
-    /** Recalcula o tint de todos quando o time do jogador local fica conhecido. */
-    refreshTints() {
+    /**
+     * A cor da peça vem do time absoluto, então não muda. Mas a moldura de
+     * debug é relativa (verde = meu time, vermelho = adversário) e só pode ser
+     * decidida depois que o time do jogador local chega.
+     */
+    refreshDebugColors() {
         for (const actor of this.actors.values()) {
             actor.isOpponent = this.isOpponent(actor.actorState);
-            actor.applyTeamTint();
+            actor.applyDebugColor();
         }
     }
 

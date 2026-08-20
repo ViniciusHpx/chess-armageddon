@@ -64,6 +64,17 @@ No evento `postupdate` da cena, a ordem é **resolver colisões → prender ao m
 
 A cena mantém dois grupos, `this.alliedPlayers` e `this.enemyPlayers` ([Start.js:36](src/scenes/Start.js#L36)). Cada `AIPlayer` resolve seus adversários por `this.team === 'ally' ? scene.enemyPlayers : scene.alliedPlayers`. Atenção às inconsistências existentes: o `HumanPlayer` tem `team = 'human'` (não `'ally'`) mas é adicionado ao grupo `alliedPlayers`, e seu `attack()` referencia `scene.enemyPlayers` diretamente. Ao mexer em times, verifique os dois caminhos.
 
+### Cor dos times
+
+Cada peça existe em duas artes: `assets/<peça>_<tamanho>.png` (clara) e `assets/<peça>_<tamanho>_b.png` (escura). As escuras são carregadas sob a chave `<rank>_black` e **os dois modos precisam carregar as dez**, senão a peça some ao trocar de time ou promover.
+
+`skinKey(rankKey, team)` ([Hierarchy.js](src/constants/Hierarchy.js)) é o único lugar que decide a cor: time `enemy` → escura, qualquer outro → clara (inclusive o `'human'` do `HumanPlayer`, que joga pelos aliados apesar do nome). Quem chama:
+
+- offline — `PlayerBase` no construtor e em `setRank()`, então promoção e respawn já saem na cor certa;
+- online — `ArenaActor.applyRank()`, pelo campo `team` do estado.
+
+A cor vem do time **absoluto**, nunca de `isOpponent`. `isOpponent` é relativo a quem olha: usá-lo pintaria a mesma peça de cores diferentes em cada tela. O relativo sobrou só na moldura de debug (`applyDebugColor()`: amarelo eu, verde meu time, vermelho o adversário).
+
 ### Ranks (src/constants/Hierarchy.js)
 
 `RANKS` é a fonte única de verdade para velocidade, vida, massa, tamanho do sprite, tempo de carga, forma de ataque e o encadeamento de promoção (`next`). `size.width/height` **deve** bater com o `frameWidth/frameHeight` do spritesheet declarado no `preload()` — `applyRankPhysics()` deriva o raio da elipse de colisão a partir desse `size` (base: 128×128 → rx 50 / ry 25).
@@ -163,6 +174,8 @@ fora do que aparece na tela:
 1. **`RANKS`** — `../chess-armageddon-server/src/sim/constants.ts` é a fonte de
    verdade; [Hierarchy.js](src/constants/Hierarchy.js) é a cópia de desenho.
    `RANK_ORDER` define o `uint8` que trafega: **a ordem não pode mudar de um lado só**.
+   O mesmo vale para `TEAM_ORDER` (espelha `TEAM_INDEX` lá): inverter de um
+   lado só troca a cor de todos os personagens.
 2. **A fórmula do centro da elipse** — `ArenaActor.getEllipseCenter()` aqui e
    `Actor.ellipseCenter()` lá. Ela reproduz o `body.center` do Arcade sem ter um
    corpo: `centerY = y + altura/2 - collisionRx + collisionRy * 4/3`.

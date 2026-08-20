@@ -105,6 +105,33 @@ export const AURA_THRESHOLDS = [
  */
 export const RANK_ORDER = ['PAWN', 'TOWER', 'HORSE', 'BISHOP', 'QUEEN'];
 
+/**
+ * Ordem dos times tal como o servidor os envia no campo `team` (uint8).
+ * Espelha `TEAM_INDEX` em `src/sim/constants.ts` — mudar de um lado só troca
+ * a cor de todo mundo.
+ */
+export const TEAM_ORDER = ['ally', 'enemy'];
+
+/**
+ * Sufixo do spritesheet de cada time. O time `enemy` veste as peças escuras
+ * (`assets/*_b.png`), carregadas sob a chave `<rank>_black`; o `ally` usa as
+ * claras, sem sufixo.
+ */
+const TEAM_SKIN_SUFFIX = {
+    ally: '',
+    enemy: '_black'
+};
+
+/**
+ * Chave da textura de uma peça conforme rank e time.
+ *
+ * Qualquer time que não seja `enemy` recebe a peça clara — inclusive o
+ * `'human'` do `HumanPlayer`, que joga pelos aliados apesar do nome.
+ */
+export function skinKey(rankKey, team) {
+    return `${rankKey}${TEAM_SKIN_SUFFIX[team] || ''}`;
+}
+
 /** Dimensões do mapa. Espelha WORLD_WIDTH/WORLD_HEIGHT do servidor. */
 export const WORLD_WIDTH = 3548;
 export const WORLD_HEIGHT = 1774;

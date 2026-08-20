@@ -1,4 +1,4 @@
-import { RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS } from '../constants/Hierarchy.js';
+import { RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey } from '../constants/Hierarchy.js';
 
 export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y, textureKey, team, debugColor) {
@@ -31,6 +31,10 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         this.debugColor = debugColor || 0xffffff;
         this.team = team;
+
+        // A peça veste a cor do time. Precisa vir depois de `this.team` e
+        // antes de `applyRankPhysics`, que lê o tamanho do frame da textura.
+        this.setTexture(skinKey(this._currentRank.key, this.team));
 
         this._attackHitEnemies = new Set();
         this._attackEnemyGroup = null;
@@ -167,7 +171,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     setRank(rankConfig) {
         this._currentRank = rankConfig;
-        this.setTexture(rankConfig.key);
+        this.setTexture(skinKey(rankConfig.key, this.team));
         this.applyRankPhysics(rankConfig);
     }
 
@@ -251,10 +255,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         this.debugGraphics.fillStyle(this.debugColor, 0.08);
         this.debugGraphics.fillEllipse(center.x, center.y, rx * 2, ry * 2);
-    }
-
-    setSkin(skinKey) {
-        this.setTexture(skinKey);
     }
 
     addAuraFromKill(enemy) {
