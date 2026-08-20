@@ -6,13 +6,8 @@ export default class AIPlayer extends PlayerBase {
         const debugColor = team === 'ally' ? 0x00ff00 : 0xff0000;
         super(scene, x, y, RANKS.PAWN.key, team, debugColor);
 
-        // Aplica tint conforme o time:
-        // - Aliados: NENHUM tint (mantém a cor original do sprite)
-        // - Inimigos: cinza escuro (0xFBA1AD)
-        if (team === 'enemy') {
-            this.setTint(0xFBA1AD);
-        }
-        // Aliados NÃO recebem tint
+        // Define a textura correta conforme o time
+        this.updateSkinByTeam();
 
         this.wanderAngle = Math.random() * Math.PI * 2;
         this.wanderTimer = 0;
@@ -23,6 +18,21 @@ export default class AIPlayer extends PlayerBase {
 
     setRandomTimer() {
         this.wanderTimer = Phaser.Math.Between(1000, 3000);
+    }
+
+    /**
+     * Atualiza a textura da peça conforme seu time e rank atual
+     */
+    updateSkinByTeam() {
+        if (this.team === 'enemy') {
+            // Usa a versão preta para inimigos
+            this.setTexture(`${this._currentRank.key}_black`);
+            this.clearTint(); // Remove qualquer tom de cor anterior
+        } else {
+            // Usa a versão padrão para aliados
+            this.setTexture(this._currentRank.key);
+            this.clearTint();
+        }
     }
 
     die() {
@@ -47,12 +57,8 @@ export default class AIPlayer extends PlayerBase {
         this.currentHealth = this.maxHealth;
         this.updateHealthBar();
 
-        // Reaplica o tint ao ressuscitar (importante para inimigos)
-        if (this.team === 'enemy') {
-            this.setTint(0xFBA1AD);
-        } else {
-            this.clearTint(); // garante que aliado não tenha tint
-        }
+        // Reaplica a textura correta ao renascer
+        this.updateSkinByTeam();
 
         this.setActive(true);
         this.setVisible(true);
@@ -172,5 +178,17 @@ export default class AIPlayer extends PlayerBase {
         }
 
         this.performAttack(enemies);
+    }
+
+    // Sobrescreve o método de promoção para atualizar a textura ao evoluir de rank
+    promote() {
+        super.promote();
+        this.updateSkinByTeam();
+    }
+
+    // Sobrescreve o método de definir rank para garantir a textura correta
+    setRank(rankConfig) {
+        super.setRank(rankConfig);
+        this.updateSkinByTeam();
     }
 }
