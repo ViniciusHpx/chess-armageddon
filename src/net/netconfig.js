@@ -27,15 +27,37 @@ export function resolveEndpoint() {
     return `${protocol}//${window.location.host}`;
 }
 
-/** Nome exibido aos outros jogadores. Vem de `?name=`, senão é sorteado. */
-export function resolvePlayerName() {
+/**
+ * O nome vive em `sessionStorage`, não em `localStorage`: assim ele sobrevive
+ * a um F5 e à morte do personagem (que nem reconecta), mas morre junto com a
+ * aba — abrir o jogo de novo pede um nome novo.
+ */
+const NAME_STORAGE_KEY = "ca:name";
+
+/** Mesmo limite do `sanitizeName()` do servidor. */
+const MAX_NAME_LENGTH = 16;
+
+/**
+ * Nome já conhecido, ou `null` se ainda é preciso perguntar.
+ * `?name=` tem prioridade e pula a tela de entrada.
+ */
+export function storedPlayerName() {
     const fromQuery = new URLSearchParams(window.location.search).get("name");
-    if (fromQuery) return fromQuery.slice(0, 16);
+    if (fromQuery && fromQuery.trim()) return fromQuery.trim().slice(0, MAX_NAME_LENGTH);
 
-    const saved = window.localStorage.getItem("ca:name");
-    if (saved) return saved;
+    return window.sessionStorage.getItem(NAME_STORAGE_KEY);
+}
 
-    const generated = `Peão ${Math.floor(Math.random() * 1000)}`;
-    window.localStorage.setItem("ca:name", generated);
-    return generated;
+/** Guarda o nome escolhido na tela de entrada pelo resto da sessão da aba. */
+export function storePlayerName(name) {
+    window.sessionStorage.setItem(NAME_STORAGE_KEY, name.trim().slice(0, MAX_NAME_LENGTH));
+}
+
+/**
+ * Nome exibido aos outros jogadores, usado pela `Arena` ao entrar na sala.
+ * A essa altura o `main.js` já garantiu que existe um; a string vazia é só uma
+ * rede de segurança — o servidor a substitui por "Jogador <id>".
+ */
+export function resolvePlayerName() {
+    return storedPlayerName() || "";
 }

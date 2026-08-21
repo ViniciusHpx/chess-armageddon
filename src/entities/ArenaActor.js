@@ -1,6 +1,22 @@
 import { RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, skinKey } from '../constants/Hierarchy.js';
 
 /**
+ * Atraso de renderização dos personagens que não são o jogador local, em ms.
+ *
+ * Desenhá-los no passado é o que permite interpolar entre dois patches que
+ * realmente chegaram, em vez de adivinhar o futuro. Precisa cobrir o intervalo
+ * entre patches (50 ms) com folga para o jitter — na Render free os patches
+ * chegam em rajada, e com folga curta o buffer seca e o boneco trava.
+ */
+const INTERP_DELAY_MS = 120;
+
+/** Amostras guardadas por personagem (~1,2 s a 20 patches/s). */
+const SNAPSHOT_MAX = 24;
+
+/** Salto entre dois patches que não é movimento, e sim respawn/teleporte. */
+const TELEPORT_DISTANCE = 250;
+
+/**
  * Personagem no modo ONLINE: só desenho.
  *
  * Ao contrário de `PlayerBase`, esta classe não tem física, IA, vida nem
@@ -60,11 +76,18 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
             strokeThickness: 3
         }).setOrigin(0.5);
 
-        // Posição suavizada. O servidor manda 20 correções por segundo; o jogo
-        // desenha a 60 fps, então cada quadro caminha um pouco em direção ao
-        // último valor recebido em vez de saltar.
+        // Posição desenhada. Para o jogador local vem da previsão; para os
+        // outros, do buffer de amostras abaixo.
         this.renderX = actorState.x;
         this.renderY = actorState.y;
+
+        /**
+         * Histórico de posições com a hora de chegada de cada patch, alimentado
+         * por `Arena.bindRoom` via `room.onStateChange`.
+         *
+         * @type {{x: number, y: number, t: number}[]}
+         */
+        this.snapshots = [{ x: actorState.x, y: actorState.y, t: performance.now() }];
 
         this.applyRank();
     }
@@ -116,11 +139,60 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
     // -----------------------------------------------------------------------
 
     /**
-     * @param {number} delta ms desde o quadro anterior.
+     * Registra a posição deste patch. Chamado uma vez por patch pela cena, com
+     * a hora real de chegada — não com o relógio do quadro do Phaser, que só
+     * anda 60 vezes por segundo e borraria o intervalo entre amostras.
+     *
+     * @param {number} now `performance.now()` no momento em que o patch chegou.
+     */
+    pushSnapshot(now) {
+        const s = this.actorState;
+        const last = this.snapshots[this.snapshots.length - 1];
+
+        // Respawn: interpolar por cima faria o boneco deslizar pelo mapa.
+        if (last && Math.hypot(s.x - last.x, s.y - last.y) > TELEPORT_DISTANCE) {
+            this.snapshots.length = 0;
+        }
+
+        this.snapshots.push({ x: s.x, y: s.y, t: now });
+        if (this.snapshots.length > SNAPSHOT_MAX) this.snapshots.shift();
+    }
+
+    /**
+     * Posição interpolada em `now - INTERP_DELAY_MS`, entre as duas amostras
+     * que cercam esse instante.
+     *
+     * Se o buffer secar (patch atrasado), segura na última amostra em vez de
+     * extrapolar: chutar o futuro produz exatamente o solavanco de ida e volta
+     * que este buffer existe para eliminar.
+     */
+    interpolatedPosition(now) {
+        const buf = this.snapshots;
+        if (buf.length === 0) return { x: this.actorState.x, y: this.actorState.y };
+
+        const alvo = now - INTERP_DELAY_MS;
+
+        // Descarta o que já ficou para trás, mantendo a amostra imediatamente
+        // anterior a `alvo` na posição 0.
+        while (buf.length > 2 && buf[1].t <= alvo) buf.shift();
+
+        const a = buf[0];
+        const b = buf[1] || a;
+        const span = b.t - a.t;
+        const k = span > 0 ? Phaser.Math.Clamp((alvo - a.t) / span, 0, 1) : 1;
+
+        return {
+            x: a.x + (b.x - a.x) * k,
+            y: a.y + (b.y - a.y) * k
+        };
+    }
+
+    /**
+     * @param {number} now `performance.now()` deste quadro.
      * @param {?{x: number, y: number}} predicted Posição prevista localmente;
      *        só o personagem do próprio jogador recebe uma.
      */
-    sync(delta, predicted) {
+    sync(now, predicted) {
         const s = this.actorState;
 
         const rankKey = RANK_ORDER[s.rank];
@@ -145,11 +217,9 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
             this.renderX = predicted.x;
             this.renderY = predicted.y;
         } else {
-            // Suavização exponencial independente do frame rate: com
-            // SMOOTHING=0.25 por 16,7 ms, o erro cai ~75% a cada 60 ms.
-            const t = 1 - Math.pow(1 - 0.25, delta / 16.67);
-            this.renderX += (s.x - this.renderX) * t;
-            this.renderY += (s.y - this.renderY) * t;
+            const pos = this.interpolatedPosition(now);
+            this.renderX = pos.x;
+            this.renderY = pos.y;
         }
 
         this.setPosition(this.renderX, this.renderY);

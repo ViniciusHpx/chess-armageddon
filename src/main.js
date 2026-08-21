@@ -1,5 +1,7 @@
 import { Start } from './scenes/Start.js';
 import { Arena } from './scenes/Arena.js';
+import { askPlayerName, hideNameGate } from './ui/NameGate.js';
+import { storedPlayerName, storePlayerName } from './net/netconfig.js';
 
 /**
  * Dois modos, escolhidos pela URL:
@@ -11,6 +13,17 @@ import { Arena } from './scenes/Arena.js';
  * `Start`; a `Arena` não cria corpos — quem simula lá é o servidor.
  */
 const offline = new URLSearchParams(window.location.search).has('offline');
+
+/**
+ * Pergunta o nome ANTES de instanciar o jogo. Depois de `new Phaser.Game()`,
+ * o `InputManager` passa a capturar Espaço e setas e o campo de texto perderia
+ * essas teclas. O modo offline não exibe nomes, então pula a tela.
+ */
+if (offline || storedPlayerName()) {
+    hideNameGate();
+} else {
+    storePlayerName(await askPlayerName());
+}
 
 const config = {
     type: Phaser.AUTO,

@@ -20,20 +20,35 @@ import { ROOM_NAME, resolveEndpoint, resolvePlayerName } from '../net/netconfig.
 /** Erro de posição, em pixels, a partir do qual não vale mais suavizar. */
 const SNAP_DISTANCE = 250;
 
-/** Fração do erro corrigida por segundo ao reconciliar com o servidor. */
-const RECONCILE_RATE = 4;
+/**
+ * Fração do erro corrigida por segundo ao reconciliar com o servidor.
+ *
+ * Pode ser alto porque, com a reconciliação por sequência, o erro que sobra é
+ * pequeno e real (colisão, clamp) — não mais o atraso da rede.
+ */
+const RECONCILE_RATE = 10;
 
 /** Variação mínima do vetor de entrada que justifica um pacote novo. */
 const INPUT_EPSILON = 0.01;
 
 /**
- * Reenvio da entrada mesmo sem mudança, em ms.
+ * Intervalo fixo de envio da entrada, em ms. Casa com o TICK_MS do servidor.
  *
- * O servidor guarda o último vetor recebido e o descarta depois de
- * INPUT_TIMEOUT_MS (2 s) sem notícias. Este keepalive é o que prova que o
- * cliente continua vivo enquanto o jogador segura a mesma tecla.
+ * O envio a taxa fixa é o que torna a reconciliação possível: cada pacote
+ * numerado delimita uma janela de tempo, e o cliente guarda o deslocamento que
+ * produziu em cada uma. Sabendo por `ack` até que janela o servidor andou, ele
+ * reaplica só as que ainda estavam no ar.
+ *
+ * Serve de keepalive também: o servidor solta o comando depois de
+ * INPUT_TIMEOUT_MS (2 s) sem notícias.
  */
-const INPUT_KEEPALIVE_MS = 500;
+const INPUT_SEND_MS = 50;
+
+/** Piso entre dois pacotes: mudar de direção envia na hora, mas sem estourar. */
+const INPUT_MIN_GAP_MS = 30;
+
+/** Janelas de entrada guardadas para reenvio (50 ms cada = 6 s de folga). */
+const INPUT_HISTORY_MAX = 120;
 
 export class Arena extends Phaser.Scene {
     constructor() {
@@ -79,6 +94,15 @@ export class Arena extends Phaser.Scene {
         this.lastSentDy = 0;
         this.lastInputSentAt = 0;
 
+        // Reconciliação: número do pacote de entrada e o histórico do que cada
+        // pacote já enviado moveu localmente. Ver `stepPrediction`.
+        this.inputSeq = 0;
+        /** @type {{seq: number, ddx: number, ddy: number}[]} */
+        this.pendingInputs = [];
+        // Deslocamento acumulado desde o último pacote (a janela ainda aberta).
+        this.segDx = 0;
+        this.segDy = 0;
+
         this.localCharging = false;
         this.localChargeStart = 0;
 
@@ -113,10 +137,7 @@ export class Arena extends Phaser.Scene {
     haltInput() {
         if (!this.room) return;
 
-        this.room.send('i', { dx: 0, dy: 0 });
-        this.lastSentDx = 0;
-        this.lastSentDy = 0;
-        this.lastInputSentAt = this.time.now;
+        this.sendInputPacket(0, 0, performance.now());
 
         if (this.localCharging) {
             this.localCharging = false;
@@ -197,9 +218,7 @@ export class Arena extends Phaser.Scene {
 
             if (isLocal) {
                 this.localTeam = actorState.team;
-                this.predX = actorState.x;
-                this.predY = actorState.y;
-                this.predReady = true;
+                this.resetPrediction(actorState);
                 this.refreshDebugColors();
             }
         });
@@ -208,6 +227,15 @@ export class Arena extends Phaser.Scene {
             const actor = this.actors.get(key);
             if (actor) actor.destroy();
             this.actors.delete(key);
+        });
+
+        // Cada patch é uma amostra do mundo com hora de chegada. Guardá-las aqui
+        // (e não no quadro do Phaser) é o que permite aos outros personagens
+        // serem desenhados no passado, interpolando entre duas amostras reais
+        // em vez de correrem atrás do último valor recebido — ver ArenaActor.
+        room.onStateChange(() => {
+            const now = performance.now();
+            for (const actor of this.actors.values()) actor.pushSnapshot(now);
         });
 
         room.onMessage('kill', ({ killer, victim }) => this.pushKillFeed(`${killer} matou ${victim}`));
@@ -252,10 +280,15 @@ export class Arena extends Phaser.Scene {
     update(time, delta) {
         this.inputs.update();
 
+        // Relógio dos pacotes. `this.time.now` só anda uma vez por quadro,
+        // enquanto os patches chegam a qualquer momento: misturar os dois
+        // desalinharia o buffer de interpolação em até um quadro.
+        const now = performance.now();
+
         const localState = this.localState();
 
         if (localState) {
-            this.sendInput(localState);
+            this.sendInput(localState, now);
             this.stepPrediction(localState, delta);
             this.updateDeathScreen(localState);
         }
@@ -267,7 +300,7 @@ export class Arena extends Phaser.Scene {
 
             actor.localCharging = actor.isLocal ? this.localCharging : false;
             actor.localChargeRatio = actor.isLocal ? this.localChargeRatio(localState) : 0;
-            actor.sync(delta, predicted);
+            actor.sync(now, predicted);
         }
 
         this.followLocalActor();
@@ -291,19 +324,20 @@ export class Arena extends Phaser.Scene {
         this.cameraLocked = true;
     }
 
-    /** Manda pacote quando o vetor muda, ou de tempos em tempos como keepalive. */
-    sendInput(localState) {
+    /**
+     * Manda a entrada a taxa fixa (INPUT_SEND_MS), e na hora quando o vetor
+     * muda — respeitado o piso de INPUT_MIN_GAP_MS, para uma rajada de teclas
+     * não estourar o `maxMessagesPerSecond` do servidor.
+     */
+    sendInput(localState, now) {
         const { dx, dy } = this.inputs.getMovementVector();
 
+        const desde = now - this.lastInputSentAt;
         const mudou = Math.abs(dx - this.lastSentDx) > INPUT_EPSILON ||
             Math.abs(dy - this.lastSentDy) > INPUT_EPSILON;
-        const vencido = this.time.now - this.lastInputSentAt > INPUT_KEEPALIVE_MS;
 
-        if (mudou || vencido) {
-            this.room.send('i', { dx, dy });
-            this.lastSentDx = dx;
-            this.lastSentDy = dy;
-            this.lastInputSentAt = this.time.now;
+        if (desde >= INPUT_SEND_MS || (mudou && desde >= INPUT_MIN_GAP_MS)) {
+            this.sendInputPacket(dx, dy, now);
         }
 
         const attack = this.inputs.getAttackState();
@@ -328,24 +362,74 @@ export class Arena extends Phaser.Scene {
     }
 
     /**
-     * Previsão + reconciliação do próprio personagem.
+     * Envia um pacote de entrada e fecha a janela do pacote anterior.
      *
-     * Anda localmente com as mesmas regras do servidor (velocidade do rank,
-     * parado durante o golpe) e, a cada quadro, puxa a posição prevista em
-     * direção à autoritativa. A previsão não modela a separação entre
-     * personagens nem o clamp exato, então o erro cresce ao encostar em alguém
-     * — é justamente esse resto que a reconciliação absorve.
+     * O deslocamento acumulado até agora (`segDx`/`segDy`) é fruto do vetor que
+     * estava valendo, ou seja, do pacote `inputSeq`; ele vai para o histórico
+     * sob esse número e uma janela nova começa zerada.
+     */
+    sendInputPacket(dx, dy, now) {
+        if (this.inputSeq > 0) {
+            this.pendingInputs.push({ seq: this.inputSeq, ddx: this.segDx, ddy: this.segDy });
+            if (this.pendingInputs.length > INPUT_HISTORY_MAX) this.pendingInputs.shift();
+        }
+        this.segDx = 0;
+        this.segDy = 0;
+
+        this.inputSeq++;
+        this.room.send('i', { dx, dy, s: this.inputSeq });
+
+        this.lastSentDx = dx;
+        this.lastSentDy = dy;
+        this.lastInputSentAt = now;
+    }
+
+    /** Joga a previsão para a posição do servidor e esquece o que estava no ar. */
+    resetPrediction(localState) {
+        this.predX = localState.x;
+        this.predY = localState.y;
+        this.predReady = true;
+        this.pendingInputs.length = 0;
+        this.segDx = 0;
+        this.segDy = 0;
+    }
+
+    /**
+     * Previsão + reconciliação por sequência.
+     *
+     * O ponto de partida é sempre a posição autoritativa — mas ela é de um RTT
+     * atrás. Reconciliar direto contra ela (como se fazia antes) deixava a
+     * previsão permanentemente adiantada em `velocidade × RTT`: ~60 px com o
+     * peão a 300 ms de latência. A cada quadro esse erro era puxado para trás,
+     * e o boneco andava, voltava e andava de novo.
+     *
+     * Agora o servidor devolve em `ack` até que pacote de entrada ele já andou.
+     * O alvo passa a ser a posição autoritativa MAIS o deslocamento das janelas
+     * com sequência maior que `ack` — as que ainda estavam viajando quando o
+     * patch foi gerado. O atraso da rede sai da conta e o que sobra é só
+     * divergência de verdade (empurrão de outro personagem, clamp na borda),
+     * que é pequena e rara.
+     *
+     * Guarda-se o deslocamento efetivo (depois do clamp), não `velocidade × dt`:
+     * assim, encostado numa parede, a janela registra zero e o alvo não foge
+     * para fora do mapa.
      */
     stepPrediction(localState, delta) {
         if (!this.predReady) return;
 
         const dt = delta / 1000;
+        const size = RANKS[RANK_ORDER[localState.rank]].size;
+        const halfW = size.width / 2;
+        const halfH = size.height / 2;
 
         if (!localState.alive) {
-            this.predX = localState.x;
-            this.predY = localState.y;
+            // Morto não anda, e o respawn é um teleporte: histórico não serve.
+            this.resetPrediction(localState);
             return;
         }
+
+        const antesX = this.predX;
+        const antesY = this.predY;
 
         if (!localState.attacking) {
             const { dx, dy } = this.inputs.getMovementVector();
@@ -354,18 +438,41 @@ export class Arena extends Phaser.Scene {
             this.predY += dy * speed * dt;
         }
 
-        const size = RANKS[RANK_ORDER[localState.rank]].size;
-        this.predX = Phaser.Math.Clamp(this.predX, size.width / 2, WORLD_WIDTH - size.width / 2);
-        this.predY = Phaser.Math.Clamp(this.predY, size.height / 2, WORLD_HEIGHT - size.height / 2);
+        this.predX = Phaser.Math.Clamp(this.predX, halfW, WORLD_WIDTH - halfW);
+        this.predY = Phaser.Math.Clamp(this.predY, halfH, WORLD_HEIGHT - halfH);
 
-        const errorX = localState.x - this.predX;
-        const errorY = localState.y - this.predY;
+        this.segDx += this.predX - antesX;
+        this.segDy += this.predY - antesY;
+
+        // Alvo = posição do servidor + tudo que mandei depois do que ele confirmou.
+        const ack = localState.ack;
+        let alvoX = localState.x;
+        let alvoY = localState.y;
+
+        while (this.pendingInputs.length > 0 && this.pendingInputs[0].seq <= ack) {
+            this.pendingInputs.shift();
+        }
+        for (const janela of this.pendingInputs) {
+            alvoX += janela.ddx;
+            alvoY += janela.ddy;
+        }
+        // A janela ainda aberta pertence a `inputSeq`; só conta se o servidor
+        // não a confirmou (só acontece com latência perto de zero).
+        if (this.inputSeq > ack) {
+            alvoX += this.segDx;
+            alvoY += this.segDy;
+        }
+
+        alvoX = Phaser.Math.Clamp(alvoX, halfW, WORLD_WIDTH - halfW);
+        alvoY = Phaser.Math.Clamp(alvoY, halfH, WORLD_HEIGHT - halfH);
+
+        const errorX = alvoX - this.predX;
+        const errorY = alvoY - this.predY;
 
         if (Math.hypot(errorX, errorY) > SNAP_DISTANCE) {
-            // Divergência grande (respawn, teleporte, lag longo): suavizar aqui
+            // Divergência grande (teleporte, queda longa de rede): suavizar aqui
             // faria o boneco atravessar o mapa deslizando.
-            this.predX = localState.x;
-            this.predY = localState.y;
+            this.resetPrediction(localState);
             return;
         }
 

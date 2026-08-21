@@ -30,7 +30,7 @@ Para jogar online, suba o servidor antes: `cd ../chess-armageddon-server && npm 
 | Parâmetro | Efeito |
 | --- | --- |
 | `?offline=1` | sobe a cena `Start` (jogo local, sem servidor) |
-| `?name=Fulano` | nome exibido aos outros (senão sorteia e guarda no localStorage) |
+| `?name=Fulano` | nome exibido aos outros; **pula a tela de entrada** |
 | `?server=wss://...` | aponta para outro servidor sem editar arquivo |
 | tecla `H` | liga/desliga o desenho das hitboxes (só na `Arena`) |
 
@@ -133,34 +133,93 @@ cliente manda entrada e desenha o estado que volta.
 | [src/scenes/Arena.js](src/scenes/Arena.js) | conecta, cria/destrói atores, envia entrada, prevê o próprio movimento |
 | [src/entities/ArenaActor.js](src/entities/ArenaActor.js) | **só desenho**: sprite, barra de vida, hitbox, aura, brilho de carga, forma do golpe |
 | [src/net/netconfig.js](src/net/netconfig.js) | endpoint do servidor e nome do jogador |
+| [src/ui/NameGate.js](src/ui/NameGate.js) | tela de entrada do nome (HTML, roda antes do Phaser) |
 
 Reaproveitados sem alteração dos dois modos: `InputManager`, `DeathScreen`,
 `Hierarchy.js`.
+
+### Nome do jogador
+
+A tela que pede o nome é **HTML** (marcação e CSS em [index.html](index.html), lógica em [NameGate.js](src/ui/NameGate.js)), não uma cena do Phaser, e roda em [main.js](src/main.js) **antes** de `new Phaser.Game()`. Dois motivos, nessa ordem:
+
+1. `InputManager` registra captura de Espaço e das setas; o Phaser chama `preventDefault()` nelas e o campo de texto perderia essas teclas. Antes do jogo existir, não há captura nenhuma.
+2. Um `<input>` de verdade abre o teclado virtual no celular — um campo desenhado no canvas não abre.
+
+Enquanto a tela está aberta o Phaser **ainda não subiu**: o `await askPlayerName()` no topo do módulo segura a criação do jogo. O `#name-gate` é opaco e cobre a tela inteira, então nada aparece atrás.
+
+O nome mora em `sessionStorage`, não em `localStorage`. Assim ele:
+
+- sobrevive à morte (o respawn é um `room.send('r')` na mesma conexão — o servidor nunca relê o nome);
+- sobrevive a um F5;
+- **morre junto com a aba**, que é o pedido: abrir o jogo de novo pede um nome novo.
+
+Trocar de armazenamento é o único lugar a mexer se essa regra mudar: `storedPlayerName()`/`storePlayerName()` em [netconfig.js](src/net/netconfig.js). Modo offline não exibe nomes e pula a tela.
+
+O limite de 16 caracteres aparece em três lugares e é o do `sanitizeName()` do servidor: `maxlength` do input, `MAX_LENGTH` do `NameGate` e `MAX_NAME_LENGTH` do `netconfig`.
 
 `ArenaActor` estende `GameObjects.Sprite`, **não** `Physics.Arcade.Sprite`: sem
 corpo Arcade não existe uma segunda simulação para divergir da do servidor.
 `PlayerBase` continua sendo usado só pela cena `Start`.
 
-### Previsão e reconciliação
+### Previsão e reconciliação por sequência
 
 O personagem local anda no mesmo quadro da tecla (`stepPrediction`), aplicando
-as mesmas regras do servidor (velocidade do rank, parado durante o golpe). A
-cada quadro a posição prevista é puxada para a autoritativa a `RECONCILE_RATE`
-(4/s); acima de `SNAP_DISTANCE` (250 px) ela salta, porque suavizar um respawn
-faria o boneco atravessar o mapa deslizando.
+as mesmas regras do servidor (velocidade do rank, parado durante o golpe).
 
-A previsão **não** modela a separação entre personagens nem o clamp exato, então
-o erro cresce ao encostar em alguém — é justamente esse resto que a
-reconciliação absorve. Os demais atores não são previstos: só suavizados por
-interpolação exponencial em `ArenaActor.sync()`.
+O ponto delicado é contra o que reconciliar. A posição autoritativa que chega no
+patch é de um RTT atrás; puxar a previsão direto para ela deixa o boneco
+permanentemente adiantado em `velocidade × RTT` e sendo arrastado de volta todo
+quadro — anda, volta, anda. Com o servidor num datacenter fora do país isso passa
+de 50 px e fica impossível de ignorar.
+
+Por isso cada pacote de entrada leva uma sequência (`s`) e o servidor devolve em
+`ActorState.ack` a última que já aplicou. O cliente guarda, para cada pacote
+enviado, **quanto aquele pacote moveu o boneco localmente** (`pendingInputs`), e
+o alvo da reconciliação passa a ser:
+
+```
+alvo = posição do servidor + soma dos deslocamentos com seq > ack
+```
+
+ou seja, a posição autoritativa mais o que ainda estava viajando quando o patch
+foi gerado. O atraso da rede sai da conta; sobra só divergência de verdade
+(empurrão de outro personagem, clamp na borda), que é pequena — daí
+`RECONCILE_RATE` poder ser 10/s. Acima de `SNAP_DISTANCE` (250 px) a previsão
+salta e o histórico é descartado, porque suavizar um respawn faria o boneco
+atravessar o mapa deslizando.
+
+Guarda-se o deslocamento **efetivo** (medido depois do clamp), não
+`velocidade × dt`: encostado numa parede a janela registra zero e o alvo não foge
+para fora do mapa.
+
+### Interpolação dos outros personagens
+
+Os demais atores não são previstos — são desenhados **no passado**.
+`room.onStateChange` empilha em cada `ArenaActor` a posição de cada patch com a
+hora real de chegada (`pushSnapshot`), e `interpolatedPosition` desenha em
+`now - INTERP_DELAY_MS` (120 ms) interpolando entre as duas amostras que cercam
+esse instante. Se o buffer secar, segura na última amostra em vez de extrapolar:
+chutar o futuro produz exatamente o solavanco de ida e volta que o buffer existe
+para evitar. Salto maior que 250 px entre patches é respawn, não movimento, e
+limpa o buffer.
+
+O atraso precisa cobrir o intervalo entre patches (50 ms) com folga para jitter.
+Encurtá-lo demais faz os bonecos travarem quando os patches chegam em rajada.
 
 ### Entrada
 
-Enviada quando o vetor muda **ou** a cada 500 ms como keepalive. O servidor
-guarda o último vetor e o descarta após 2 s sem pacote — sem isso, uma aba em
-segundo plano (o Phaser pausa o loop e para de enviar) deixaria o boneco andando
-sozinho até a borda do mapa. Pela mesma razão a cena manda `{0,0}` nos eventos
-`BLUR`/`HIDDEN` do jogo (`haltInput`).
+Enviada a cada 50 ms (`INPUT_SEND_MS`, o mesmo `TICK_MS` do servidor), e na hora
+quando o vetor muda — respeitado um piso de 30 ms para uma rajada de teclas não
+estourar o `maxMessagesPerSecond` da sala. A taxa fixa não é só keepalive: é ela
+que dá à reconciliação janelas de tempo bem delimitadas para numerar.
+
+O servidor guarda o último vetor e o descarta após 2 s sem pacote — sem isso, uma
+aba em segundo plano (o Phaser pausa o loop e para de enviar) deixaria o boneco
+andando sozinho até a borda do mapa. Pela mesma razão a cena manda `{0,0}` nos
+eventos `BLUR`/`HIDDEN` do jogo (`haltInput`).
+
+Pacote com sequência menor ou igual à já processada é descartado pelo servidor
+(`World.setInput`), mas ainda conta como sinal de vida.
 
 A carga do ataque é cronometrada **pelo servidor**: o cliente só informa
 *apertei* e *soltei*. O brilho de carga local usa o relógio do cliente para não
