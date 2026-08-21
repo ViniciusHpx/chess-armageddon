@@ -86,6 +86,25 @@ Os contadores **não zeram ao morrer nem ao promover** (só a aura zera): no onl
 
 A cadência é uma **taxa por segundo** convertida com `1 - exp(-taxa * dt)`, não uma chance por tick/quadro. Isso desamarra a agressividade de `TICK_MS` (servidor) e da taxa de quadros (offline). Bot não bate em alvo invulnerável — só gastaria o cooldown.
 
+### Empurrão do golpe (knockback)
+
+Todo golpe que **conecta** empurra o alvo para longe do atacante. A direção sai do centro da elipse do atacante para a do alvo, calculada por alvo — um golpe que pega três inimigos espalha os três em leque, cada um para o lado em que estava.
+
+A força é `knockbackSpeed(charged, massaDoAlvo)`, definida nos dois lados ([Hierarchy.js](src/constants/Hierarchy.js) e `constants.ts`). Duas escolhas deliberadas de balanceamento, ambas para não ficar discrepante:
+
+- o carregado multiplica por **1,8**, não por 2 como o dano: dobrar dano e empurrão juntos arremessaria o alvo para fora da briga sem chance de revidar;
+- divide pela **raiz** da massa, não pela massa: com a massa crua a torre (massa 4) mal se mexeria e o peão voaria quatro vezes mais longe.
+
+O empurrão decai exponencialmente (`KNOCKBACK_DECAY_MS` de constante de tempo), então o deslocamento total é ≈ `velocidade × τ`: 66 px num peão, 119 carregado, 33 numa torre.
+
+Três armadilhas que já custaram caro aqui:
+
+1. **Integre na posição, não em `body.velocity`.** Somar na velocidade parece natural, mas `AIPlayer.aiUpdate` retorna cedo enquanto o golpe está em curso, sem redefinir a velocidade — a soma se acumulava quadro após quadro e arremessava a peça. Offline isso vive em `PlayerBase.applyKnockback`, que move `x`/`y` e chama `body.updateFromGameObject()`, como o `CollisionResolver`.
+2. **O `delta` vem da cena**, passado por `commonUpdate(deltaMs)`. Ler `scene.game.loop.delta` não serve: vale 0 com o jogo pausado (aba em segundo plano), e o empurrão congelava em vez de decair.
+3. **Alvo invulnerável não leva empurrão.** `takeDamage` já recusa o dano; sem a guarda explícita, quem acabou de renascer era arrastado pelo mapa sem perder vida.
+
+No online nada disso está no cliente: o `World` do servidor integra o empurrão junto com a velocidade e o `ArenaActor` só desenha a posição que chega. A previsão local **não** modela o empurrão, então levar um golpe gera erro de posição — é o mesmo resto que a reconciliação já absorve na colisão entre personagens.
+
 ### Ranks (src/constants/Hierarchy.js)
 
 `RANKS` é a fonte única de verdade para velocidade, vida, massa, tamanho do sprite, tempo de carga, forma de ataque e o encadeamento de promoção (`next`). `size.width/height` **deve** bater com o `frameWidth/frameHeight` do spritesheet declarado no `preload()` — `applyRankPhysics()` deriva o raio da elipse de colisão a partir desse `size` (base: 128×128 → rx 50 / ry 25).

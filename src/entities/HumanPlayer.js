@@ -127,7 +127,7 @@ export default class HumanPlayer extends PlayerBase {
         });
     }
 
-    update(movement, attackState) {
+    update(movement, attackState, deltaMs) {
         // Morto: ignora entrada até renascer
         if (this._isDead) return;
 
@@ -160,7 +160,7 @@ export default class HumanPlayer extends PlayerBase {
             }
         }
 
-        this.commonUpdate();
+        this.commonUpdate(deltaMs);
     }
 
     handleVisualEffects(dx, dy) {

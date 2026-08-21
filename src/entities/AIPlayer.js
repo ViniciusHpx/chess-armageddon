@@ -73,7 +73,7 @@ export default class AIPlayer extends PlayerBase {
 
         // Durante o ataque, apenas mantém os visuais e não altera o movimento
         if (this._isAttacking) {
-            this.commonUpdate();
+            this.commonUpdate(delta);
             return;
         }
 
@@ -144,7 +144,7 @@ export default class AIPlayer extends PlayerBase {
             }
         }
 
-        this.commonUpdate();
+        this.commonUpdate(delta);
     }
 
     /**

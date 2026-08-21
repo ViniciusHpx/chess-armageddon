@@ -86,7 +86,7 @@ export class Start extends Phaser.Scene {
         const movement = this.inputs.getMovementVector();
         const attackState = this.inputs.getAttackState();
 
-        if (!this.player._isDead) this.player.update(movement, attackState);
+        if (!this.player._isDead) this.player.update(movement, attackState, delta);
 
         this.alliedPlayers.getChildren().forEach(ai => {
             if (ai !== this.player) ai.aiUpdate(time, delta);

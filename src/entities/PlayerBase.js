@@ -1,4 +1,7 @@
-import { RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey } from '../constants/Hierarchy.js';
+import {
+    RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
+    KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
+} from '../constants/Hierarchy.js';
 
 export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y, textureKey, team, debugColor) {
@@ -60,6 +63,12 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         // Propriedades da elipse de colisão (definidas por applyRankPhysics)
         this.collisionRx = 50;
         this.collisionRy = 25;
+
+        // Empurrão em curso, em px/s. Somado à velocidade em `commonUpdate`,
+        // depois que a entidade já definiu a dela — assim vale mesmo enquanto
+        // o alvo ataca ou anda contra o golpe.
+        this._knockbackVx = 0;
+        this._knockbackVy = 0;
 
         // Inicializa o emissor de partículas da aura (se ainda não existir a textura)
         this._createAuraEmitter();
@@ -185,6 +194,74 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     resetToPawn() {
         this.setRank(RANKS.PAWN);
+        this.clearKnockback();
+    }
+
+    /**
+     * Recebe o empurrão de um golpe.
+     *
+     * @param {PlayerBase} attacker Quem bateu; a direção sai do centro da
+     *        elipse dele para a desta peça.
+     * @param {boolean} charged Se o golpe estava carregado.
+     */
+    receiveKnockback(attacker, charged) {
+        const from = attacker.getEllipseCenter();
+        const to = this.getEllipseCenter();
+        let dx = to.x - from.x;
+        let dy = to.y - from.y;
+        let length = Math.hypot(dx, dy);
+
+        // Centros praticamente coincidentes: sem direção definida, empurra
+        // para onde o atacante está olhando.
+        if (length < 1e-3) {
+            dx = attacker.flipX ? -1 : 1;
+            dy = 0;
+            length = 1;
+        }
+
+        const speed = knockbackSpeed(charged, this.getCollisionMass());
+        this._knockbackVx = (dx / length) * speed;
+        this._knockbackVy = (dy / length) * speed;
+    }
+
+    clearKnockback() {
+        this._knockbackVx = 0;
+        this._knockbackVy = 0;
+    }
+
+    /**
+     * Move a peça pelo empurrão do quadro e o faz decair.
+     *
+     * Recebe o `delta` da cena em vez de ler `scene.game.loop.delta`: o valor
+     * do loop é 0 enquanto o jogo está pausado (aba em segundo plano), e usá-lo
+     * deixava o empurrão congelado em vez de decair.
+     *
+     * Integra direto na POSIÇÃO, como o servidor, em vez de somar em
+     * `body.velocity`: há caminhos que não redefinem a velocidade no quadro
+     * (`AIPlayer.aiUpdate` retorna cedo enquanto o golpe está em curso), e ali
+     * a soma se acumularia quadro após quadro até arremessar a peça.
+     *
+     * O decaimento é exponencial, então independe da taxa de quadros.
+     */
+    applyKnockback(deltaMs) {
+        if (this._knockbackVx === 0 && this._knockbackVy === 0) return;
+        if (!this.active || !this.body) return;
+        if (!(deltaMs > 0)) return; // quadro sem tempo decorrido não move nada
+
+        const dt = deltaMs / 1000;
+
+        this.x += this._knockbackVx * dt;
+        this.y += this._knockbackVy * dt;
+        // Ressincroniza o corpo ainda neste quadro, como faz o CollisionResolver.
+        this.body.updateFromGameObject();
+
+        const decay = Math.exp(-deltaMs / KNOCKBACK_DECAY_MS);
+        this._knockbackVx *= decay;
+        this._knockbackVy *= decay;
+
+        if (Math.hypot(this._knockbackVx, this._knockbackVy) < KNOCKBACK_MIN_SPEED) {
+            this.clearKnockback();
+        }
     }
 
     takeDamage(amount) {
@@ -309,7 +386,10 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.auraEmitter.setVisible(visible);
     }
 
-    commonUpdate() {
+    /** @param {number} deltaMs Delta do quadro, vindo do `update` da cena. */
+    commonUpdate(deltaMs = 0) {
+        this.applyKnockback(deltaMs);
+
         this.setDepth(this.y);
         this.debugGraphics.setDepth(this.y - 1);
         this.healthBar.setDepth(this.y + 100);
@@ -620,7 +700,18 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     applyDamageToEnemy(enemy, damage) {
         this._attackHitEnemies.add(enemy);
+
+        // Golpe que não conecta não empurra. Sem esta guarda, quem acabou de
+        // renascer (ou de levar dano) seria arrastado pelo mapa sem perder
+        // vida — `takeDamage` recusa o dano, mas o empurrão passaria.
+        if (enemy._isInvulnerable) return;
+
         const killed = enemy.takeDamage(damage);
+
+        // Cada alvo é empurrado na SUA direção (deste atacante para ele), então
+        // um golpe que pega três inimigos os espalha em leque, não em bloco.
+        enemy.receiveKnockback(this, this._isChargedAttack);
+
         if (killed) {
             this.addAuraFromKill(enemy);
             this.promote();

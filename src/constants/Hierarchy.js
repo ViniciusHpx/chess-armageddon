@@ -167,6 +167,41 @@ export function attackHalfBand(rank) {
     }
 }
 
+/**
+ * Empurrão do golpe. Espelha as constantes de mesmo nome em `constants.ts`.
+ *
+ * `KNOCKBACK_SPEED` é a velocidade inicial, em px/s, de um golpe normal sobre
+ * uma peça de massa 1 (o peão); o empurrão decai exponencialmente com
+ * `KNOCKBACK_DECAY_MS` de constante de tempo, então o deslocamento total é
+ * aproximadamente `velocidade * (KNOCKBACK_DECAY_MS / 1000)` — cerca de 63 px
+ * num peão, 113 no golpe carregado.
+ */
+export const KNOCKBACK_SPEED = 420;
+
+/**
+ * Quanto o golpe carregado empurra a mais. Deliberadamente MENOR que o
+ * multiplicador de dano (que é 2): dobrar dano e empurrão juntos arremessaria
+ * o alvo para fora da briga, sem chance de revidar.
+ */
+export const KNOCKBACK_CHARGED_FACTOR = 1.8;
+
+export const KNOCKBACK_DECAY_MS = 150;
+
+/** Abaixo disto o empurrão é zerado, para o alvo não ficar à deriva. */
+export const KNOCKBACK_MIN_SPEED = 5;
+
+/**
+ * Velocidade inicial do empurrão sobre um alvo de massa `targetMass`.
+ *
+ * Divide pela RAIZ da massa, e não pela massa: com a massa crua a torre
+ * (massa 4) mal se mexeria enquanto o peão (massa 1) voaria quatro vezes mais
+ * longe. A raiz mantém a diferença perceptível sem ficar discrepante.
+ */
+export function knockbackSpeed(charged, targetMass) {
+    const force = charged ? KNOCKBACK_SPEED * KNOCKBACK_CHARGED_FACTOR : KNOCKBACK_SPEED;
+    return force / Math.sqrt(Math.max(targetMass, 0.01));
+}
+
 /** Dimensões do mapa. Espelha WORLD_WIDTH/WORLD_HEIGHT do servidor. */
 export const WORLD_WIDTH = 3548;
 export const WORLD_HEIGHT = 1774;
