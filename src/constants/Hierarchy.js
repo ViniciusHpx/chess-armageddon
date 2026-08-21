@@ -168,6 +168,16 @@ export function attackHalfBand(rank) {
 }
 
 /**
+ * Dano de um golpe. Espelha `DAMAGE_NORMAL`/`DAMAGE_CHARGED` do servidor.
+ *
+ * Estavam escritos à mão dentro de `executeAttackHit`; a IA precisa deles para
+ * saber quando o carregado mata e o normal não, e duas cópias do número
+ * acabariam divergindo.
+ */
+export const DAMAGE_NORMAL = 25;
+export const DAMAGE_CHARGED = 50;
+
+/**
  * Empurrão do golpe. Espelha as constantes de mesmo nome em `constants.ts`.
  *
  * `KNOCKBACK_SPEED` é a velocidade inicial, em px/s, de um golpe normal sobre

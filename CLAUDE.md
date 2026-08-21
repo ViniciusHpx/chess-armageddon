@@ -86,6 +86,19 @@ Os contadores **não zeram ao morrer nem ao promover** (só a aura zera): no onl
 
 A cadência é uma **taxa por segundo** convertida com `1 - exp(-taxa * dt)`, não uma chance por tick/quadro. Isso desamarra a agressividade de `TICK_MS` (servidor) e da taxa de quadros (offline). Bot não bate em alvo invulnerável — só gastaria o cooldown.
 
+### Quando o bot carrega o golpe
+
+Carregar **não** rende mais dano por segundo: o ciclo normal (cooldown 700 ms + windup 200 ms) tira ~28/s, e o carregado, com a espera do `chargeTime`, fica em ~26/s. Por isso o bot não carrega por padrão — carregar é ferramenta de situação. `botShouldCharge` (servidor) e `AIPlayer.shouldCharge` (offline) implementam a mesma regra:
+
+1. **Finalização** — a vida do alvo está na janela em que o carregado mata e o normal não (`> DAMAGE_NORMAL` e `<= DAMAGE_CHARGED`). Abater promove e dá aura, o que vale bem mais que a diferença de dano.
+2. **Aproximação** — o alvo está fora do alcance normal mas dentro do carregado, que dobra o alcance. Carregar aí é de graça: não havia golpe possível de qualquer forma.
+
+Daí `canHit`/`botCanHit` receberem o `mult` (1 ou 2), o mesmo fator que `executeAttackHit` aplica às dimensões da forma.
+
+Enquanto carrega, o bot **continua perseguindo** e solta assim que o alvo entra no alcance dobrado. Dois freios evitam que ele trave: se o alvo morre ou some, a carga é cancelada sem gastar golpe; se o alvo foge, `BOT_CHARGE_HOLD_MS` (1,2 s após a carga completar) faz soltar assim mesmo — errar e recomeçar é melhor que ficar parado segurando para sempre.
+
+No online o `chargeRatio` do bot também é atualizado, então o brilho de carga aparece para os outros jogadores: dá para ver o bot preparando o golpe.
+
 ### Empurrão do golpe (knockback)
 
 Todo golpe que **conecta** empurra o alvo para longe do atacante. A direção sai do centro da elipse do atacante para a do alvo, calculada por alvo — um golpe que pega três inimigos espalha os três em leque, cada um para o lado em que estava.
@@ -127,7 +140,9 @@ Formas suportadas: `rectangle`, `circle`, `lshape`, `diamond`. **Adicionar uma n
 
 Sequência: `performAttack()` marca `_isAttacking`, e um `delayedCall(200)` aplica o hit e finaliza. `_attackHitEnemies` (Set) evita dano duplo no mesmo golpe.
 
-**Ataque carregado:** segurar o botão por `rank.chargeTime` dobra alcance (`mult = 2`) e dano (50 em vez de 25). Os valores de dano estão hardcoded em `executeAttackHit()` ([PlayerBase.js:451](src/entities/PlayerBase.js#L451)).
+**Ataque carregado:** segurar o botão por `rank.chargeTime` dobra alcance (`mult = 2`) e dano (`DAMAGE_CHARGED` em vez de `DAMAGE_NORMAL`), e multiplica o empurrão por 1,8.
+
+A máquina de carga (`startCharging` / `updateCharge` / `releaseCharge` / `cancelCharge`) mora no `PlayerBase`, não no `HumanPlayer`: humano e bot usam exatamente a mesma, e o que muda entre eles é só **quem decide** apertar e soltar — a entrada do jogador de um lado, `AIPlayer.decideAttack`/`stepCharge` do outro.
 
 ### Aura
 

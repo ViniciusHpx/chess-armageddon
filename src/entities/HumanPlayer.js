@@ -5,10 +5,8 @@ export default class HumanPlayer extends PlayerBase {
     constructor(scene, x, y) {
         super(scene, x, y, RANKS.PAWN.key, 'human', 0xffff00);
 
-        // Estado de carga do ataque
-        this._isCharging = false;
-        this._chargeStartTime = 0;
-        this._chargeComplete = false;
+        // A máquina de carga vive no `PlayerBase`: aqui só se decide quando
+        // apertar e quando soltar, a partir da entrada do jogador.
 
         // Morto: aguardando o clique em RENASCER na tela de morte
         this._isDead = false;
@@ -23,64 +21,12 @@ export default class HumanPlayer extends PlayerBase {
     /**
      * Inicia o processo de carga (botão pressionado).
      */
-    startCharging() {
-        if (this._isAttacking || this._isCharging) return;
-        this._isCharging = true;
-        this._chargeStartTime = this.scene.time.now;
-        this._chargeComplete = false;
-        this._chargeRatio = 0; // reseta o progresso visual
-    }
-
-    /**
-     * Solta o botão de ataque. Executa ataque normal ou carregado.
-     */
-    releaseAttack() {
-        if (!this._isCharging) return;
-
-        const elapsed = this.scene.time.now - this._chargeStartTime;
-        const chargeTime = this._currentRank.chargeTime;
-
-        if (elapsed >= chargeTime) {
-            this._performChargedAttack();
-        } else {
-            this.attack();
-        }
-
-        // Finaliza a carga
-        this._isCharging = false;
-        this._chargeComplete = false;
-        this._chargeRatio = 0; // limpa o indicador
-    }
-
-    /**
-     * Atualiza o progresso da carga enquanto o botão está segurado.
-     */
-    updateCharge() {
-        if (!this._isCharging) return;
-        const elapsed = this.scene.time.now - this._chargeStartTime;
-        const ratio = Phaser.Math.Clamp(elapsed / this._currentRank.chargeTime, 0, 1);
-        this._chargeRatio = ratio; // atualiza a cor do brilho
-
-        if (elapsed >= this._currentRank.chargeTime) {
-            this._chargeComplete = true;
-            // O brilho já está ativo, pode-se adicionar som ou outro feedback
-        }
-    }
-
-    _performChargedAttack() {
-        if (this._isAttacking) return;
-        this._isChargedAttack = true; // ativa dobro de dano e alcance
-        this.performAttack(this.scene.enemyPlayers);
-    }
-
     die() {
         this._isDead = true;
 
         // Cancela ataque e carga em andamento
         this.finishAttack();
-        this._isCharging = false;
-        this._chargeComplete = false;
-        this._chargeRatio = 0;
+        this.cancelCharge();
 
         this.stopWalkEffect();
         this.wasWalking = false;
@@ -136,7 +82,7 @@ export default class HumanPlayer extends PlayerBase {
             this.startCharging();
         }
         if (attackState.justReleased) {
-            this.releaseAttack();
+            this.releaseCharge(this.scene.enemyPlayers);
         }
 
         if (this._isCharging) {

@@ -1,5 +1,7 @@
 import PlayerBase from './PlayerBase.js';
-import { RANKS, attackHalfBand, attackReach } from '../constants/Hierarchy.js';
+import {
+    RANKS, attackHalfBand, attackReach, DAMAGE_NORMAL, DAMAGE_CHARGED
+} from '../constants/Hierarchy.js';
 
 /**
  * Tempo mínimo entre dois golpes do mesmo bot. Espelha
@@ -18,6 +20,15 @@ const ATTACK_RATE_PER_SECOND = 3;
 
 /** Folga somada ao alcance: o alvo se mexe durante os 200 ms do golpe. */
 const ATTACK_RANGE_SLACK = 20;
+
+/**
+ * Quanto tempo o bot segura um golpe já carregado esperando o alvo entrar no
+ * alcance, antes de soltar assim mesmo. Espelha `BOT_CHARGE_HOLD_MS`.
+ *
+ * Sem este teto, um alvo que foge deixaria o bot paralisado segurando a carga
+ * para sempre. Soltar no vazio é melhor: gasta o cooldown e ele volta a agir.
+ */
+const CHARGE_HOLD_MS = 1200;
 
 export default class AIPlayer extends PlayerBase {
     constructor(scene, x, y, team) {
@@ -134,17 +145,82 @@ export default class AIPlayer extends PlayerBase {
         else if (vx > 0) this.setFlipX(false);
 
         // --- ATAQUE ---
-        this._attackCooldown -= delta;
-        if (this._attackCooldown <= 0 && nearestEnemy && this.canHit(nearestEnemy)) {
-            // Taxa por segundo convertida na chance deste quadro.
-            const chance = 1 - Math.exp(-ATTACK_RATE_PER_SECOND * (delta / 1000));
-            if (Math.random() < chance) {
-                this.attack(nearestEnemy, enemies);
-                this._attackCooldown = ATTACK_COOLDOWN_MS;
-            }
+        if (this._isCharging) {
+            this.stepCharge(nearestEnemy, enemies);
+        } else {
+            this.decideAttack(nearestEnemy, enemies, delta);
         }
 
         this.commonUpdate(delta);
+    }
+
+    /** Escolhe entre não atacar, bater normal ou começar a carregar. */
+    decideAttack(target, enemies, delta) {
+        this._attackCooldown -= delta;
+        if (this._attackCooldown > 0 || !target) return;
+
+        const alcancaNormal = this.canHit(target, 1);
+        const alcancaCarregado = this.canHit(target, 2);
+        if (!alcancaNormal && !alcancaCarregado) return;
+
+        // Taxa por segundo convertida na chance deste quadro.
+        const chance = 1 - Math.exp(-ATTACK_RATE_PER_SECOND * (delta / 1000));
+        if (Math.random() >= chance) return;
+
+        this.setFlipX(target.x < this.x);
+
+        if (AIPlayer.shouldCharge(target, alcancaNormal, alcancaCarregado)) {
+            this.startCharging();
+            return;
+        }
+
+        this.attack(target, enemies);
+        this._attackCooldown = ATTACK_COOLDOWN_MS;
+    }
+
+    /**
+     * Vale a pena carregar em vez de bater logo?
+     *
+     * Carregar NÃO rende mais dano por segundo — o ciclo normal (cooldown 700
+     * + windup 200) tira ~28/s, e o carregado, com a espera do `chargeTime`,
+     * fica em torno de ~26/s. Carregar é ferramenta de situação, não a jogada
+     * padrão. As duas situações em que compensa:
+     *
+     *   1. FINALIZAÇÃO — a vida do alvo está na janela em que o carregado mata
+     *      e o normal não. Abater promove e dá aura, o que vale bem mais que a
+     *      diferença de dano.
+     *   2. APROXIMAÇÃO — o alvo está fora do alcance normal mas dentro do
+     *      carregado (que dobra o alcance). Carregar aí é de graça: não existia
+     *      golpe possível de qualquer forma.
+     */
+    static shouldCharge(target, alcancaNormal, alcancaCarregado) {
+        if (!alcancaCarregado) return false;
+
+        const finaliza = target.currentHealth > DAMAGE_NORMAL
+            && target.currentHealth <= DAMAGE_CHARGED;
+
+        return finaliza || !alcancaNormal;
+    }
+
+    /** Carga em curso: continua perseguindo e escolhe a hora de soltar. */
+    stepCharge(target, enemies) {
+        this.updateCharge();
+
+        // Alvo morreu ou sumiu: não há o que finalizar, desiste sem gastar golpe.
+        if (!target) {
+            this.cancelCharge();
+            return;
+        }
+
+        if (!this._chargeComplete) return;
+
+        const segurando = this.scene.time.now - this._chargeStartTime;
+        const esperouDemais = segurando >= this._currentRank.chargeTime + CHARGE_HOLD_MS;
+        if (!this.canHit(target, 2) && !esperouDemais) return;
+
+        this.setFlipX(target.x < this.x);
+        this.releaseCharge(enemies);
+        this._attackCooldown = ATTACK_COOLDOWN_MS;
     }
 
     /**
@@ -154,8 +230,11 @@ export default class AIPlayer extends PlayerBase {
      * dentro do alcance do rank e — para os golpes retos — alvo na faixa à
      * frente. Antes eram 100 px fixos para todo rank, medidos de `x`/`y` em vez
      * do centro da elipse de onde o dano realmente sai.
+     *
+     * @param {number} mult 1 para golpe normal, 2 para carregado. É o mesmo
+     *        fator que `executeAttackHit` aplica às dimensões da forma.
      */
-    canHit(enemy) {
+    canHit(enemy, mult) {
         if (enemy._isInvulnerable) return false; // só gastaria o cooldown
 
         const from = this.getEllipseCenter();
@@ -163,13 +242,13 @@ export default class AIPlayer extends PlayerBase {
         const dx = to.x - from.x;
         const dy = to.y - from.y;
 
-        const reach = this.collisionRx + attackReach(this._currentRank)
+        const reach = this.collisionRx + attackReach(this._currentRank) * mult
             + enemy.collisionRx + ATTACK_RANGE_SLACK;
         // Compara os quadrados: dispensa a raiz quadrada a cada quadro.
         if (dx * dx + dy * dy > reach * reach) return false;
 
         // `Infinity` nos golpes radiais passa direto, sem ramificação extra.
-        return Math.abs(dy) <= attackHalfBand(this._currentRank) + enemy.collisionRy;
+        return Math.abs(dy) <= attackHalfBand(this._currentRank) * mult + enemy.collisionRy;
     }
 
     /**

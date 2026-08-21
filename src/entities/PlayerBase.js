@@ -1,5 +1,6 @@
 import {
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
+    DAMAGE_NORMAL, DAMAGE_CHARGED,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
 } from '../constants/Hierarchy.js';
 
@@ -56,9 +57,11 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         // Flag para ataque carregado
         this._isChargedAttack = false;
 
-        // Flag visual de carga (usado pela subclasse humana)
+        // Máquina de carga do ataque, compartilhada por humano e bot.
         this._isCharging = false;
-        this._chargeRatio = 0; // 0 a 1, progresso da carga
+        this._chargeRatio = 0;   // 0 a 1, progresso — alimenta o brilho
+        this._chargeStartTime = 0;
+        this._chargeComplete = false;
 
         // Propriedades da elipse de colisão (definidas por applyRankPhysics)
         this.collisionRx = 50;
@@ -558,7 +561,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const startY = attackerCenter.y;
 
         const mult = this._isChargedAttack ? 2 : 1;
-        const damage = this._isChargedAttack ? 50 : 25;
+        const damage = this._isChargedAttack ? DAMAGE_CHARGED : DAMAGE_NORMAL;
 
         switch (atk.type) {
             case 'rectangle': {
@@ -696,6 +699,56 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const closestY = (closestU - closestV) / 2 + dCy;
 
         return PlayerBase.ellipseContainsPoint(closestX, closestY, eCx, eCy, rx, ry);
+    }
+
+    // -----------------------------------------------------------------------
+    // CARGA DO ATAQUE
+    //
+    // Vive aqui, e não no `HumanPlayer`, porque o bot usa exatamente a mesma
+    // máquina: o que muda entre os dois é só QUANDO cada um decide carregar.
+    // -----------------------------------------------------------------------
+
+    startCharging() {
+        if (this._isAttacking || this._isCharging) return;
+        this._isCharging = true;
+        this._chargeStartTime = this.scene.time.now;
+        this._chargeComplete = false;
+        this._chargeRatio = 0;
+    }
+
+    /** Avança o progresso da carga. Precisa rodar todo quadro enquanto carrega. */
+    updateCharge() {
+        if (!this._isCharging) return;
+
+        const elapsed = this.scene.time.now - this._chargeStartTime;
+        this._chargeRatio = Phaser.Math.Clamp(elapsed / this._currentRank.chargeTime, 0, 1);
+        if (elapsed >= this._currentRank.chargeTime) this._chargeComplete = true;
+    }
+
+    /**
+     * Solta a carga: vira golpe carregado se o tempo do rank foi cumprido, e
+     * golpe normal se soltou antes.
+     *
+     * @param {Phaser.GameObjects.Group} enemyGroup Alvos do golpe.
+     */
+    releaseCharge(enemyGroup) {
+        if (!this._isCharging) return;
+
+        const elapsed = this.scene.time.now - this._chargeStartTime;
+        const charged = elapsed >= this._currentRank.chargeTime;
+        this.cancelCharge();
+
+        if (this._isAttacking) return;
+
+        this._isChargedAttack = charged;
+        this.performAttack(enemyGroup);
+    }
+
+    /** Abandona a carga sem golpe nenhum. */
+    cancelCharge() {
+        this._isCharging = false;
+        this._chargeComplete = false;
+        this._chargeRatio = 0;
     }
 
     applyDamageToEnemy(enemy, damage) {
