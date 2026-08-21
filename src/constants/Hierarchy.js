@@ -132,6 +132,41 @@ export function skinKey(rankKey, team) {
     return `${rankKey}${TEAM_SKIN_SUFFIX[team] || ''}`;
 }
 
+/**
+ * Alcance do golpe, do centro da elipse até a ponta da forma.
+ *
+ * Espelha `attackReach()` do servidor. Serve para a IA decidir QUANDO bater —
+ * o dano continua saindo da geometria exata de `executeAttackHit()`. Antes a
+ * IA usava 100 px fixos para todo rank: o peão (alcance 80) atacava fora e a
+ * rainha (150) só colada.
+ */
+export function attackReach(rank) {
+    const atk = rank.attack;
+    switch (atk.type) {
+        case 'rectangle': return atk.length;
+        case 'circle': return atk.radius;
+        case 'lshape': return atk.forwardLength;
+        case 'diamond': return atk.radius;
+        default: return 0;
+    }
+}
+
+/**
+ * Meia-altura (em Y) da área que o golpe cobre. Espelha `attackHalfBand()`.
+ *
+ * Golpes retos (peão, cavalo) só acertam quem está na faixa à frente; os
+ * radiais (torre, bispo, rainha) pegam em volta e não têm restrição — daí o
+ * `Infinity`, que dispensa um `if` na comparação.
+ */
+export function attackHalfBand(rank) {
+    const atk = rank.attack;
+    switch (atk.type) {
+        case 'rectangle': return atk.width / 2;
+        case 'lshape': return atk.width / 2 + atk.sideLength / 2;
+        default: return Infinity;
+    }
+}
+
 /** Dimensões do mapa. Espelha WORLD_WIDTH/WORLD_HEIGHT do servidor. */
 export const WORLD_WIDTH = 3548;
 export const WORLD_HEIGHT = 1774;

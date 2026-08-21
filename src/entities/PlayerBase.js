@@ -32,6 +32,14 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.debugColor = debugColor || 0xffffff;
         this.team = team;
 
+        /**
+         * Nome e placar da partida, lidos pelo painel do TAB. Sobrevivem à
+         * morte e à promoção de propósito — só a aura zera ao morrer.
+         */
+        this.displayName = 'Anônimo';
+        this.kills = 0;
+        this.deaths = 0;
+
         // A peça veste a cor do time. Precisa vir depois de `this.team` e
         // antes de `applyRankPhysics`, que lê o tamanho do frame da textura.
         this.setTexture(skinKey(this._currentRank.key, this.team));
@@ -616,6 +624,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         if (killed) {
             this.addAuraFromKill(enemy);
             this.promote();
+            this.kills++;
+            enemy.deaths++;
         }
     }
 

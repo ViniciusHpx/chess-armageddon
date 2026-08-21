@@ -3,6 +3,7 @@ import AIPlayer from '../entities/AIPlayer.js';
 import InputManager from '../utils/InputManager.js';
 import CollisionResolver from '../utils/CollisionResolver.js';
 import DeathScreen from '../ui/DeathScreen.js';
+import Scoreboard from '../ui/Scoreboard.js';
 
 export class Start extends Phaser.Scene {
     preload() {
@@ -44,30 +45,21 @@ export class Start extends Phaser.Scene {
         this.alliedPlayers = this.physics.add.group();
         this.enemyPlayers = this.physics.add.group();
 
-        // Aliados (4 bots)
-        for (let i = 0; i < 4; i++) {
-            const x = Phaser.Math.Between(800, 3000);
-            const y = Phaser.Math.Between(200, 1500);
-            const ally = new AIPlayer(this, x, y, 'ally');
-            this.alliedPlayers.add(ally);
-        }
-
-        // Inimigos (5 bots)
-        for (let i = 0; i < 5; i++) {
-            const x = Phaser.Math.Between(800, 3000);
-            const y = Phaser.Math.Between(200, 1500);
-            const enemy = new AIPlayer(this, x, y, 'enemy');
-            this.enemyPlayers.add(enemy);
-        }
+        // Aliados (4 bots) e inimigos (5 bots). O nome só existe para o
+        // placar do TAB; o offline não desenha nome sobre a cabeça.
+        this.spawnBots(this.alliedPlayers, 'ally', 4, 1);
+        this.spawnBots(this.enemyPlayers, 'enemy', 5, 5);
 
         // Jogador humano (pertence aos aliados)
         this.player = new HumanPlayer(this, 500, 700);
+        this.player.displayName = 'Você';
         this.alliedPlayers.add(this.player);
 
         this.inputs = new InputManager(this);
 
         // Tela de morte (criada depois do InputManager para ficar acima da UI)
         this.deathScreen = new DeathScreen(this);
+        this.scoreboard = new Scoreboard(this, () => this.scoreRows());
 
         // Câmera
         this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
@@ -100,5 +92,48 @@ export class Start extends Phaser.Scene {
             if (ai !== this.player) ai.aiUpdate(time, delta);
         });
         this.enemyPlayers.getChildren().forEach(ai => ai.aiUpdate(time, delta));
+
+        this.scoreboard.update(time);
+    }
+
+    /**
+     * @param {Phaser.GameObjects.Group} group
+     * @param {'ally'|'enemy'} team
+     * @param {number} count Quantos bots criar.
+     * @param {number} firstNumber Número do primeiro bot, para os nomes não
+     *        se repetirem entre os dois times.
+     */
+    spawnBots(group, team, count, firstNumber) {
+        for (let i = 0; i < count; i++) {
+            const x = Phaser.Math.Between(800, 3000);
+            const y = Phaser.Math.Between(200, 1500);
+            const bot = new AIPlayer(this, x, y, team);
+            bot.displayName = `Bot ${firstNumber + i}`;
+            group.add(bot);
+        }
+    }
+
+    /**
+     * Linhas do placar. O `HumanPlayer` tem `team = 'human'` mas joga pelos
+     * aliados, então o time vem do grupo em que está — e não do campo.
+     */
+    scoreRows() {
+        const rows = [];
+
+        const collect = (group, team) => {
+            for (const entity of group.getChildren()) {
+                rows.push({
+                    name: entity.displayName,
+                    team,
+                    kills: entity.kills,
+                    deaths: entity.deaths,
+                    isLocal: entity === this.player
+                });
+            }
+        };
+
+        collect(this.alliedPlayers, 'ally');
+        collect(this.enemyPlayers, 'enemy');
+        return rows;
     }
 }

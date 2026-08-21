@@ -1,7 +1,8 @@
 import ArenaActor from '../entities/ArenaActor.js';
 import InputManager from '../utils/InputManager.js';
 import DeathScreen from '../ui/DeathScreen.js';
-import { RANKS, RANK_ORDER, WORLD_WIDTH, WORLD_HEIGHT } from '../constants/Hierarchy.js';
+import Scoreboard from '../ui/Scoreboard.js';
+import { RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT } from '../constants/Hierarchy.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName } from '../net/netconfig.js';
 
 /**
@@ -110,6 +111,7 @@ export class Arena extends Phaser.Scene {
 
         this.inputs = new InputManager(this);
         this.deathScreen = new DeathScreen(this);
+        this.scoreboard = new Scoreboard(this, () => this.scoreRows());
 
         this.createHud();
 
@@ -304,6 +306,28 @@ export class Arena extends Phaser.Scene {
         }
 
         this.followLocalActor();
+        this.scoreboard.update(time);
+    }
+
+    /**
+     * Linhas do placar a partir do schema. Só roda com o painel aberto, então
+     * percorrer o MapSchema aqui é barato — são no máximo TEAM_SIZE * 2 atores.
+     */
+    scoreRows() {
+        const actors = this.room && this.room.state && this.room.state.actors;
+        if (!actors) return [];
+
+        const rows = [];
+        actors.forEach((actorState, key) => {
+            rows.push({
+                name: actorState.name,
+                team: TEAM_ORDER[actorState.team],
+                kills: actorState.kills,
+                deaths: actorState.deaths,
+                isLocal: key === this.room.sessionId
+            });
+        });
+        return rows;
     }
 
     localState() {

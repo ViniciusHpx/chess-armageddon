@@ -33,6 +33,7 @@ Para jogar online, suba o servidor antes: `cd ../chess-armageddon-server && npm 
 | `?name=Fulano` | nome exibido aos outros; **pula a tela de entrada** |
 | `?server=wss://...` | aponta para outro servidor sem editar arquivo |
 | tecla `H` | liga/desliga o desenho das hitboxes (só na `Arena`) |
+| tecla `TAB` | mostra o placar de abates/mortes enquanto estiver pressionada (nos dois modos) |
 
 ### prompt_generator.ipynb
 
@@ -74,6 +75,16 @@ Cada peça existe em duas artes: `assets/<peça>_<tamanho>.png` (clara) e `asset
 - online — `ArenaActor.applyRank()`, pelo campo `team` do estado.
 
 A cor vem do time **absoluto**, nunca de `isOpponent`. `isOpponent` é relativo a quem olha: usá-lo pintaria a mesma peça de cores diferentes em cada tela. O relativo sobrou só na moldura de debug (`applyDebugColor()`: amarelo eu, verde meu time, vermelho o adversário).
+
+### Placar e IA dos bots
+
+**Placar.** [Scoreboard.js](src/ui/Scoreboard.js) é usado pelos dois modos e não sabe de onde vêm os dados: recebe uma função que devolve linhas `{name, team, kills, deaths, isLocal}`. Cada cena tem seu adaptador — `Arena.scoreRows()` lê o schema do servidor, `Start.scoreRows()` varre os grupos de sprites. Só monta a string com o painel aberto, e no máximo a cada 200 ms.
+
+Os contadores **não zeram ao morrer nem ao promover** (só a aura zera): no online vivem no `Actor` e trafegam como `uint16` saturado; no offline vivem no `PlayerBase`. O TAB usa `addCapture` para o navegador não tirar o foco do canvas, e o painel se esconde no `BLUR`/`HIDDEN` — sem isso, um Alt+Tab com a tecla presa deixaria o placar preso aberto.
+
+**IA de ataque.** `attackReach()` e `attackHalfBand()` ([Hierarchy.js](src/constants/Hierarchy.js), espelhando `constants.ts`) dizem até onde e em que faixa cada rank acerta. O bot só ataca quando o alvo está nesse alcance, medido entre **centros de elipse** — a mesma origem que `executeAttackHit` usa. Antes eram 100 px fixos para todo rank, medidos de `x`/`y`: o peão (alcance 80) atacava fora e a rainha (150) só colada.
+
+A cadência é uma **taxa por segundo** convertida com `1 - exp(-taxa * dt)`, não uma chance por tick/quadro. Isso desamarra a agressividade de `TICK_MS` (servidor) e da taxa de quadros (offline). Bot não bate em alvo invulnerável — só gastaria o cooldown.
 
 ### Ranks (src/constants/Hierarchy.js)
 
@@ -239,9 +250,11 @@ fora do que aparece na tela:
    `Actor.ellipseCenter()` lá. Ela reproduz o `body.center` do Arcade sem ter um
    corpo: `centerY = y + altura/2 - collisionRx + collisionRy * 4/3`.
 
-Adicionar uma forma de ataque nova agora exige **três** `switch` em sincronia:
+Adicionar uma forma de ataque nova agora exige **cinco** `switch` em sincronia:
 `drawAttackVisual()` do `PlayerBase` (offline), `drawAttackVisual()` do
-`ArenaActor` (desenho online) e `executeAttackHit()` do `World` (dano online).
+`ArenaActor` (desenho online), `executeAttackHit()` do `World` (dano online) e
+os dois pares `attackReach()`/`attackHalfBand()` (alcance da IA), um em cada
+lado. Esquecer os últimos não quebra o golpe — só faz o bot mirar errado.
 
 ### Diferenças de comportamento em relação ao offline
 
