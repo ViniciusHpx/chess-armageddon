@@ -51,6 +51,20 @@ const INPUT_MIN_GAP_MS = 30;
 /** Janelas de entrada guardadas para reenvio (50 ms cada = 6 s de folga). */
 const INPUT_HISTORY_MAX = 120;
 
+/**
+ * Teto para a previsão local do golpe.
+ *
+ * A previsão congela o boneco assim que o ataque é ENVIADO, e não quando o
+ * `attacking` volta no estado: entre uma coisa e outra passa um RTT em que o
+ * servidor já parou o personagem e o cliente ainda andava. Esse trecho andado
+ * a mais era desfeito pela reconciliação — o passo para trás a cada golpe.
+ *
+ * Só que o servidor pode nunca confirmar (morri no caminho, não estava
+ * carregando). Este teto destrava a previsão nesse caso; precisa ser folgado o
+ * bastante para cobrir RTT + ATTACK_WINDUP_MS de quem joga longe.
+ */
+const LOCAL_ATTACK_MAX_MS = 1200;
+
 export class Arena extends Phaser.Scene {
     constructor() {
         super('Arena');
@@ -107,6 +121,11 @@ export class Arena extends Phaser.Scene {
         this.localCharging = false;
         this.localChargeStart = 0;
 
+        // Golpe já enviado que o servidor ainda não confirmou no estado.
+        // Ver `stepPrediction`: a previsão para de andar já no envio.
+        this.localAttackPending = false;
+        this.localAttackSentAt = 0;
+
         this.showHitboxes = false;
 
         this.inputs = new InputManager(this);
@@ -143,6 +162,8 @@ export class Arena extends Phaser.Scene {
 
         if (this.localCharging) {
             this.localCharging = false;
+            this.localAttackPending = true;
+            this.localAttackSentAt = this.time.now;
             this.room.send('a', 0);
         }
     }
@@ -373,6 +394,10 @@ export class Arena extends Phaser.Scene {
         }
 
         if (attack.justReleased) {
+            if (this.localCharging && localState.alive) {
+                this.localAttackPending = true;
+                this.localAttackSentAt = this.time.now;
+            }
             this.localCharging = false;
             this.room.send('a', 0);
         }
@@ -416,6 +441,7 @@ export class Arena extends Phaser.Scene {
         this.pendingInputs.length = 0;
         this.segDx = 0;
         this.segDy = 0;
+        this.localAttackPending = false;
     }
 
     /**
@@ -455,7 +481,17 @@ export class Arena extends Phaser.Scene {
         const antesX = this.predX;
         const antesY = this.predY;
 
-        if (!localState.attacking) {
+        if (localState.attacking) {
+            // Chegou a confirmação: daqui em diante quem manda é o estado.
+            this.localAttackPending = false;
+        } else if (this.localAttackPending &&
+            this.time.now - this.localAttackSentAt > LOCAL_ATTACK_MAX_MS) {
+            // O servidor pode ter recusado o golpe (morri, não estava
+            // carregando). Sem este teto a previsão ficaria travada para sempre.
+            this.localAttackPending = false;
+        }
+
+        if (!localState.attacking && !this.localAttackPending) {
             const { dx, dy } = this.inputs.getMovementVector();
             const speed = RANKS[RANK_ORDER[localState.rank]].speed;
             this.predX += dx * speed * dt;
