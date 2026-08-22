@@ -107,6 +107,125 @@
                 opacity: 0.4;
                 cursor: default;
             }
+
+            /*
+                Lobby. Herda a mesma linguagem da tela de nome (fundo escuro,
+                caixa preta com borda branca, Arial Black) — os botões usam a
+                mesma regra do #name-gate, por isso os seletores estão juntos
+                mais abaixo em vez de duplicados.
+            */
+            #lobby {
+                position: fixed;
+                inset: 0;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 16px;
+                padding: 24px 16px;
+                overflow-y: auto;
+                background-color: #040218;
+                z-index: 10;
+            }
+
+            #lobby[hidden] {
+                display: none;
+            }
+
+            #lobby h1 {
+                font-family: 'Arial Black', Arial, sans-serif;
+                font-size: clamp(22px, 4vw, 36px);
+                color: #ffffff;
+                letter-spacing: 2px;
+                text-align: center;
+            }
+
+            #lobby-status {
+                font-size: 14px;
+                color: #9d9ab5;
+            }
+
+            #lobby-list {
+                width: min(460px, 92vw);
+                list-style: none;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .lobby-room {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 12px 14px;
+                background-color: #1e1e1e;
+                border: 3px solid rgba(255, 255, 255, 0.9);
+                border-radius: 6px;
+            }
+
+            .lobby-room strong {
+                display: block;
+                font-family: 'Arial Black', Arial, sans-serif;
+                font-size: 18px;
+                color: #ffffff;
+            }
+
+            .lobby-room span {
+                font-size: 13px;
+                color: #9d9ab5;
+            }
+
+            #lobby-form {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+                width: min(460px, 92vw);
+                padding: 14px;
+                background-color: #14122a;
+                border: 3px solid rgba(255, 255, 255, 0.4);
+                border-radius: 6px;
+            }
+
+            #lobby-form[hidden] {
+                display: none;
+            }
+
+            #lobby-form label {
+                font-size: 14px;
+                color: #9d9ab5;
+            }
+
+            #lobby-bots {
+                width: 100%;
+            }
+
+            #lobby button,
+            .lobby-room button {
+                padding: 12px 18px;
+                font-family: 'Arial Black', Arial, sans-serif;
+                font-size: 16px;
+                color: #ffffff;
+                background-color: #1e1e1e;
+                border: 3px solid rgba(255, 255, 255, 0.9);
+                border-radius: 6px;
+                cursor: pointer;
+            }
+
+            #lobby button:hover:not(:disabled),
+            .lobby-room button:hover:not(:disabled) {
+                background-color: #3a3a3a;
+            }
+
+            #lobby button:disabled,
+            .lobby-room button:disabled {
+                opacity: 0.4;
+                cursor: default;
+            }
+
+            #lobby-create {
+                width: min(340px, 80vw);
+            }
         </style>
     </head>
     <body>
@@ -124,6 +243,33 @@
                    spellcheck="false" placeholder="peão sem medo" autofocus>
             <button id="name-submit" type="button" disabled>ENTRAR</button>
         </div>
+        <!--
+            Lobby. Aparece depois da tela de nome e antes de o Phaser subir;
+            `Lobby.js` cuida da lista (empurrada pelo lobby do Colyseus, sem
+            polling) e some assim que o jogador escolhe uma sala.
+        -->
+        <div id="lobby" hidden>
+            <h1>SALAS</h1>
+            <p id="lobby-status">Procurando salas...</p>
+            <ul id="lobby-list"></ul>
+
+            <button id="lobby-create" type="button">CRIAR SALA</button>
+
+            <div id="lobby-form" hidden>
+                <label for="lobby-bots">Bots por time (o servidor completa os times)</label>
+                <select id="lobby-bots">
+                    <option value="0">0 bots</option>
+                    <option value="1">1 bot</option>
+                    <option value="2">2 bots</option>
+                    <option value="3">3 bots</option>
+                    <option value="4" selected>4 bots</option>
+                    <option value="5">5 bots</option>
+                </select>
+                <button id="lobby-confirm" type="button">CRIAR E ENTRAR</button>
+                <button id="lobby-cancel" type="button">CANCELAR</button>
+            </div>
+        </div>
+
         <!--
             Ambos são vendorizados e expõem globais (Phaser, Colyseus). Os
             módulos de src/ os consomem sem import, como já era o caso do Phaser.

@@ -71,9 +71,7 @@ export default class AIPlayer extends PlayerBase {
         const y = Phaser.Math.Between(margin, worldBounds.height - margin);
 
         this.setPosition(x, y);
-        this.resetToPawn();
-        this.maxHealth = RANKS.PAWN.health;
-        this.currentHealth = this.maxHealth;
+        this.resetProgressOnDeath();
         this.updateHealthBar();
 
         this.setActive(true);

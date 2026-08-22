@@ -6,6 +6,21 @@ const ATTACK_BTN_STROKE = 0x6e0000;
 const SWORD_TEXTURE = 'attack-sword-icon';
 
 /**
+ * Profundidade dos controles na tela.
+ *
+ * Precisa ficar acima dos personagens, e eles NÃO têm profundidade fixa:
+ * `setDepth(this.y)` cresce com a posição no mapa e chega perto de 1900 na
+ * borda de baixo (mais os overlays de barra de vida e carga). Com os 100 de
+ * antes, qualquer peça que passasse por perto do canto inferior direito
+ * cobria o botão.
+ *
+ * A faixa 8000 fica acima disso e continua abaixo do resto da interface, que
+ * tem de cobrir os controles: HUD de texto (9000), placar do TAB (9500) e
+ * tela de morte (10000).
+ */
+const CONTROLS_DEPTH = 8000;
+
+/**
  * Botão de dash: menor que o de ataque e logo abaixo/à esquerda dele, dentro
  * do arco natural do polegar direito, longe o bastante para não haver toque
  * errado (a distância entre centros é maior que a soma dos raios).
@@ -77,11 +92,11 @@ export default class InputManager {
     createVirtualJoystick(x, y, baseR, thumbR) {
         this.joystickBase = this.scene.add.circle(x, y, baseR, 0xffffff, 0.3);
         this.joystickBase.setScrollFactor(0);
-        this.joystickBase.setDepth(100);
+        this.joystickBase.setDepth(CONTROLS_DEPTH);
 
         this.joystickThumb = this.scene.add.circle(x, y, thumbR, 0xffffff, 0.6);
         this.joystickThumb.setScrollFactor(0);
-        this.joystickThumb.setDepth(101);
+        this.joystickThumb.setDepth(CONTROLS_DEPTH + 1);
     }
 
     createAttackButton() {
@@ -93,7 +108,7 @@ export default class InputManager {
         this.attackBtn = this.scene.add.circle(x, y, raio, ATTACK_BTN_COLOR, ATTACK_BTN_ALPHA)
             .setInteractive()
             .setScrollFactor(0)
-            .setDepth(100);
+            .setDepth(CONTROLS_DEPTH);
         this.attackBtn.setStrokeStyle(3, ATTACK_BTN_STROKE, 0.9);
 
         this.createSwordTexture();
@@ -101,7 +116,7 @@ export default class InputManager {
         // Espada na diagonal: em pé ela some no meio do círculo.
         this.attackIcon = this.scene.add.image(x, y, SWORD_TEXTURE)
             .setScrollFactor(0)
-            .setDepth(101)
+            .setDepth(CONTROLS_DEPTH + 1)
             .setAngle(-45)
             .setScale(0.78)
             .setAlpha(0.95);
@@ -155,14 +170,14 @@ export default class InputManager {
         this.dashBtn = this.scene.add.circle(x, y, DASH_BTN_RADIUS, DASH_BTN_COLOR, DASH_BTN_ALPHA)
             .setInteractive()
             .setScrollFactor(0)
-            .setDepth(100);
+            .setDepth(CONTROLS_DEPTH);
         this.dashBtn.setStrokeStyle(3, DASH_BTN_STROKE, 0.9);
 
         this.createDashTexture();
 
         this.dashIcon = this.scene.add.image(x, y, DASH_TEXTURE)
             .setScrollFactor(0)
-            .setDepth(102)
+            .setDepth(CONTROLS_DEPTH + 2)
             .setScale(0.62)
             .setAlpha(0.95);
 
@@ -170,7 +185,7 @@ export default class InputManager {
         // como um relógio. Fica entre o círculo e o ícone.
         this.dashCooldownGraphics = this.scene.add.graphics()
             .setScrollFactor(0)
-            .setDepth(101);
+            .setDepth(CONTROLS_DEPTH + 1);
 
         // -1 força o primeiro desenho; depois só redesenha quando muda.
         this._dashCooldownRatio = 0;

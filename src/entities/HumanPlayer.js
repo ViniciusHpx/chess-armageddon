@@ -48,12 +48,11 @@ export default class HumanPlayer extends PlayerBase {
     }
 
     /**
-     * Renasce como peão no centro do mapa (acionado pelo botão da tela de morte).
+     * Renasce no centro do mapa (acionado pelo botão da tela de morte),
+     * mantendo o rank e com a barra de XP zerada.
      */
     respawn() {
-        this.resetToPawn();
-        this.maxHealth = RANKS.PAWN.health;
-        this.currentHealth = this.maxHealth;
+        this.resetProgressOnDeath();
 
         this.setPosition(640, 360);
         this.setVelocity(0, 0);

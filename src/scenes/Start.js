@@ -4,6 +4,7 @@ import InputManager from '../utils/InputManager.js';
 import CollisionResolver from '../utils/CollisionResolver.js';
 import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
+import XpBar from '../ui/XpBar.js';
 
 export class Start extends Phaser.Scene {
     preload() {
@@ -60,6 +61,7 @@ export class Start extends Phaser.Scene {
         // Tela de morte (criada depois do InputManager para ficar acima da UI)
         this.deathScreen = new DeathScreen(this);
         this.scoreboard = new Scoreboard(this, () => this.scoreRows());
+        this.xpBar = new XpBar(this, () => this.player.xp);
 
         // Câmera
         this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
@@ -99,6 +101,7 @@ export class Start extends Phaser.Scene {
         this.enemyPlayers.getChildren().forEach(ai => ai.aiUpdate(time, delta));
 
         this.scoreboard.update(time);
+        this.xpBar.update(time);
     }
 
     /**

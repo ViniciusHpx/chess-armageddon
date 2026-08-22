@@ -1,4 +1,5 @@
 import {
+    levelFromRank, levelFromXp, rankKeyForLevel, XP_PER_KILL, XP_PER_LEVEL,
     attackRecoveryMs, attackWindupMs, chargeAreaMult, chargeDamage, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
@@ -17,6 +18,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._currentRank = RANKS.PAWN;
         this._isAttacking = false;
         this._isInvulnerable = false;
+        /** Experiência acumulada; o nível sai dela. Ver `addExperience`. */
+        this.xp = 0;
         this.wasWalking = false;
         this._walkTween = null;
 
@@ -199,17 +202,33 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.body.setOffset(offsetX, offsetY);
     }
 
-    promote() {
-        const nextRankKey = this._currentRank.next;
-        if (!nextRankKey) return;
-        this.setRank(RANKS[nextRankKey]);
+    /** Nível atual, derivado do rank — não é guardado em lugar nenhum. */
+    get level() {
+        return levelFromRank(this._currentRank);
+    }
 
+    /**
+     * Soma XP e sobe o rank se a XP total já der para isso. Ponto único de
+     * progressão do modo offline, espelhando `Actor.addExperience`: a XP não é
+     * gasta ao subir de nível, só acumula.
+     *
+     * @returns {boolean} true se o nível mudou.
+     */
+    addExperience(amount) {
+        if (!(amount > 0)) return false;
+
+        this.xp += amount;
+        const nivel = levelFromXp(this.xp);
+        if (nivel <= this.level) return false;
+
+        this.setRank(RANKS[rankKeyForLevel(nivel)]);
         this.maxHealth = this._currentRank.health;
         this.currentHealth = this.maxHealth;
         this.updateHealthBar();
 
         this.setTint(0x00ff00);
         this.scene.time.delayedCall(200, () => this.clearTint());
+        return true;
     }
 
     setRank(rankConfig) {
@@ -218,8 +237,17 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.applyRankPhysics(rankConfig);
     }
 
-    resetToPawn() {
-        this.setRank(RANKS.PAWN);
+    /**
+     * Perda ao morrer: o rank fica, a barra volta a zero.
+     *
+     * A XP cai para o piso do nível atual (a XP mínima do rank que já se tem),
+     * espelhando `Actor.resetProgressOnDeath`. Zerar de verdade derrubaria o
+     * rank no `addExperience` seguinte; não mexer tornaria a morte grátis.
+     */
+    resetProgressOnDeath() {
+        this.xp = (this.level - 1) * XP_PER_LEVEL;
+        this.maxHealth = this._currentRank.health;
+        this.currentHealth = this.maxHealth;
         this.clearKnockback();
     }
 
@@ -405,9 +433,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     die() {
-        this.resetToPawn();
-        this.maxHealth = RANKS.PAWN.health;
-        this.currentHealth = this.maxHealth;
+        this.resetProgressOnDeath();
         this.updateHealthBar();
     }
 
@@ -896,7 +922,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         if (killed) {
             this.addAuraFromKill(enemy);
-            this.promote();
+            this.addExperience(XP_PER_KILL);
             this.kills++;
             enemy.deaths++;
         }

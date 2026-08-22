@@ -191,6 +191,53 @@ export const AURA_THRESHOLDS = [
  */
 export const RANK_ORDER = ['PAWN', 'TOWER', 'HORSE', 'BISHOP', 'QUEEN'];
 
+// ---------------------------------------------------------------------------
+// EXPERIÊNCIA E NÍVEL (espelho de `constants.ts` do servidor)
+//
+// Nível e rank são a mesma coisa: nível 1 é peão, MAX_LEVEL é rainha, na ordem
+// de `RANK_ORDER`. Por isso o nível não é guardado nem trafega — deriva do
+// rank, e a XP acumulada é que decide o rank.
+// ---------------------------------------------------------------------------
+
+export const XP_PER_KILL = 30;
+export const XP_PER_LEVEL = 100;
+export const MAX_LEVEL = RANK_ORDER.length;
+
+export function levelFromXp(xp) {
+    const nivel = Math.floor(Math.max(0, xp) / XP_PER_LEVEL) + 1;
+    return Math.min(nivel, MAX_LEVEL);
+}
+
+/** Nível de um rank, pelo lugar dele em `RANK_ORDER`. */
+export function levelFromRank(rank) {
+    const i = RANK_ORDER.indexOf(String(rank.key).toUpperCase());
+    return (i < 0 ? 0 : i) + 1;
+}
+
+export function rankKeyForLevel(level) {
+    const i = Math.min(MAX_LEVEL, Math.max(1, Math.round(level))) - 1;
+    return RANK_ORDER[i];
+}
+
+/**
+ * Progresso DENTRO do nível atual, que é o que a barra desenha: a XP total
+ * passa de 100 e encheria a barra para sempre. No nível máximo devolve cheia,
+ * porque não existe próximo nível para calcular.
+ */
+export function xpProgress(xp) {
+    const level = levelFromXp(xp);
+    if (level >= MAX_LEVEL) {
+        return { level, into: XP_PER_LEVEL, need: XP_PER_LEVEL, max: true };
+    }
+    return {
+        level,
+        into: Math.max(0, xp) - (level - 1) * XP_PER_LEVEL,
+        need: XP_PER_LEVEL,
+        max: false
+    };
+}
+
+
 /**
  * Ordem dos times tal como o servidor os envia no campo `team` (uint8).
  * Espelha `TEAM_INDEX` em `src/sim/constants.ts` — mudar de um lado só troca

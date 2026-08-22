@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Visão geral
 
-Jogo 2D top-down de arena feito em **Phaser 3.90.0** (atenção: `project.config` declara 3.88.2, mas o `phaser.js` vendorizado é 3.90.0), JavaScript puro com ES Modules. Peças de xadrez lutam em times; matar inimigos promove a peça (peão → torre → cavalo → bispo → rainha) e acumula "aura".
+Jogo 2D top-down de arena feito em **Phaser 3.90.0** (atenção: `project.config` declara 3.88.2, mas o `phaser.js` vendorizado é 3.90.0), JavaScript puro com ES Modules. Peças de xadrez lutam em times; matar inimigos dá XP, e a XP acumulada sobe o nível — que é a própria peça (peão → torre → cavalo → bispo → rainha) — além de acumular "aura".
 
 **São dois modos, com arquiteturas opostas.** [main.js](src/main.js) escolhe pela URL:
 
@@ -32,6 +32,7 @@ Para jogar online, suba o servidor antes: `cd ../chess-armageddon-server && npm 
 | --- | --- |
 | `?offline=1` | sobe a cena `Start` (jogo local, sem servidor) |
 | `?name=Fulano` | nome exibido aos outros; **pula a tela de entrada** |
+| `?room=<id>` | entra direto nessa sala e **pula o lobby** (útil para abrir a mesma partida em duas abas) |
 | `?server=wss://...` | aponta para outro servidor sem editar arquivo |
 | tecla `H` | liga/desliga o desenho das hitboxes (só na `Arena`) |
 | tecla `SHIFT` | dash/esquiva (mesmo botão azul do HUD, nos dois modos) |
@@ -60,8 +61,8 @@ No evento `postupdate` da cena, a ordem é **resolver colisões → prender ao m
 `PlayerBase` (extends `Phaser.Physics.Arcade.Sprite`) → `HumanPlayer` e `AIPlayer`.
 
 `PlayerBase` concentra: ranks/promoção, vida e dano, sistema de aura, e **todo o sistema de ataque** (formas, detecção de acerto, visual). As subclasses só implementam entrada/comportamento e sobrescrevem `die()`:
-- `HumanPlayer.die()` — reseta para peão, zera aura, teleporta para (640, 360), shake de câmera, invulnerabilidade de 1 s.
-- `AIPlayer.die()` — desativa e respawna em posição aleatória após 1 s.
+- `HumanPlayer.die()` — zera aura, shake de câmera e tela de morte; o respawn mantém a peça (só a XP do nível volta a zero), teleporta para (640, 360) e dá 1 s de invulnerabilidade.
+- `AIPlayer.die()` — desativa e respawna em posição aleatória após 1 s, também mantendo a peça.
 
 ### Times
 
@@ -92,7 +93,7 @@ A cadência é uma **taxa por segundo** convertida com `1 - exp(-taxa * dt)`, n�
 
 Carregar **não** rende mais dano por segundo: o ciclo normal do bot (cooldown 700 ms + windup 160 ms) tira ~29/s, e o carregado, somando `chargeTime` + windup 260 + recuperação 340, fica em torno de ~24/s. Por isso o bot não carrega por padrão — carregar é ferramenta de situação. `botShouldCharge` (servidor) e `AIPlayer.shouldCharge` (offline) implementam a mesma regra:
 
-1. **Finalização** — a vida do alvo está na janela em que o carregado mata e o normal não (`> DAMAGE_NORMAL` e `<= DAMAGE_CHARGED`). Abater promove e dá aura, o que vale bem mais que a diferença de dano.
+1. **Finalização** — a vida do alvo está na janela em que o carregado mata e o normal não (`> DAMAGE_NORMAL` e `<= DAMAGE_CHARGED`). Abater dá XP e aura, o que vale bem mais que a diferença de dano.
 2. **Aproximação** — o alvo está fora do alcance normal mas dentro do carregado, que dobra o alcance. Carregar aí é de graça: não havia golpe possível de qualquer forma.
 
 O bot compara os dois extremos da escala — `chargeAreaMult(0)` e
@@ -262,6 +263,51 @@ que somem. É disparado por evento — na subida de `dashing` para os outros
 jogadores (`ArenaActor.checkDashFx`) e no toque para o dono do ator, que não
 espera o patch.
 
+### Experiência e nível
+
+O rank não sobe mais direto no abate: **o abate dá XP e o nível sai da XP
+acumulada**. Regras, todas em `constants.ts` e espelhadas em
+[Hierarchy.js](src/constants/Hierarchy.js):
+
+| Constante | Valor |
+| --- | --- |
+| `XP_PER_KILL` | 30 |
+| `XP_PER_LEVEL` | 100 |
+| `MAX_LEVEL` | 5 (= `RANK_ORDER.length`) |
+
+`levelFromXp(xp) = min(floor(xp / 100) + 1, MAX_LEVEL)`. Como nível e rank são a
+mesma coisa (nível 1 = peão, 5 = rainha, na ordem de `RANK_ORDER`), **o nível não
+é guardado nem trafega**: deriva do rank, e só a XP é estado. Mandar os dois
+abriria espaço para discordarem.
+
+**A XP nunca é gasta ao subir de nível** — 90 + 30 dá 120 XP e nível 2, não
+"120 → zera". Por isso o nível é uma divisão da XP total, e não um contador que
+esvazia. Passar do teto é inofensivo: `levelFromXp` satura e `rankKeyForLevel`
+faz clamp, então rainha com 10 000 XP continua rainha.
+
+Ponto único de progressão: `Actor.addExperience()` (online) e
+`PlayerBase.addExperience()` (offline) — mesma lógica, chamadas de um lugar só,
+no processamento do abate (`World.applyDamage` / `PlayerBase.applyDamageToEnemy`),
+logo depois da aura. O abate paga uma vez: `takeDamage` só devolve `killed` uma
+vez e o alvo já está em `hitThisAttack`.
+
+**Morrer não rebaixa a peça**: o rank fica e a XP volta ao **piso do nível
+atual** (`resetProgressOnDeath`) — cavalo com 220 XP renasce cavalo com 200, e a
+barra volta a zero. Zerar a XP de verdade derrubaria o rank no primeiro
+`addExperience` seguinte; não mexer nela tornaria a morte grátis. O piso é o
+meio-termo: perde-se só o progresso rumo à próxima peça (a aura continua
+zerando).
+
+No online o cliente **não tem mensagem** para XP, nível ou rank — o protocolo é
+só `"i"`, `"a"`, `"d"` e `"r"`. `ActorState.xp` é escrita apenas pelo servidor.
+
+A barra é a [XpBar](src/ui/XpBar.js), no padrão do `Scoreboard`: recebe uma
+função que devolve a XP total e cada cena liga na sua fonte (schema na `Arena`,
+`HumanPlayer` na `Start`). Mostra o progresso **dentro do nível**
+(`xpProgress()` → 20/100), não a XP total, que passaria de 100 e encheria a
+barra para sempre; no nível máximo mostra "MAX". Redesenha só quando a XP muda,
+e o aviso de nível novo reaproveita um único `Text`.
+
 ### Aura
 
 Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o visual: `AURA_THRESHOLDS` define a cor do emissor de partículas e a frequência escala até `maxAuraForFreq = 210`. A textura `aura-particle` é gerada por canvas em runtime — existe código duplicado que a cria tanto em `Start.create()` quanto em `PlayerBase._createAuraEmitter()`.
@@ -275,6 +321,7 @@ Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o 
 - Comentários e mensagens de commit em **português**; commits seguem Conventional Commits (`feat:`, `feat(player):`).
 - Cada `Graphics` é redesenhado do zero a cada frame (`clear()` + redraw) — são 4 por entidade.
 - Ordenação visual: `setDepth(this.y)`, com offsets fixos para os overlays (hitbox `y-1`, aura `y+99`, barra de vida `y+100`, carga `y+101`).
+- Como a profundidade dos personagens é a posição no mapa, ela chega perto de **1900** na borda de baixo. Tudo que é interface fica acima dessa faixa, em degraus fixos: controles de toque (joystick e botões) em **8000**, HUD de texto em **9000**, placar do TAB em **9500** e tela de morte em **10000**. Elemento novo de tela precisa entrar nessa escala — com valor baixo, qualquer peça que passe perto o cobre.
 
 ## Pendências conhecidas
 
@@ -298,10 +345,51 @@ cliente manda entrada e desenha o estado que volta.
 | [src/net/netconfig.js](src/net/netconfig.js) | endpoint do servidor e nome do jogador |
 | [src/utils/DashFx.js](src/utils/DashFx.js) | efeito visual do dash, usado pelos dois modos |
 | [src/utils/ChargeGlow.js](src/utils/ChargeGlow.js) | indicador de carga do ataque, usado pelos dois modos |
+| [src/ui/XpBar.js](src/ui/XpBar.js) | barra de XP/nível, usada pelos dois modos |
 | [src/ui/NameGate.js](src/ui/NameGate.js) | tela de entrada do nome (HTML, roda antes do Phaser) |
+| [src/ui/Lobby.js](src/ui/Lobby.js) | lista/criação de salas (HTML, roda antes do Phaser) |
 
 Reaproveitados sem alteração dos dois modos: `InputManager`, `DeathScreen`,
 `Hierarchy.js`.
+
+### Lobby e entrada na partida
+
+O fluxo é `nome → lobby → sala`. As duas primeiras telas são **HTML** e rodam
+antes de `new Phaser.Game()` — ver o porquê em *Nome do jogador*, logo abaixo;
+vale igual para o lobby.
+
+| Onde | O quê |
+| --- | --- |
+| [src/ui/Lobby.js](src/ui/Lobby.js) | lista as salas, cria sala, devolve a escolha |
+| `netconfig.setJoinChoice/resolveJoinChoice` | guarda a escolha até a cena `Arena` conectar |
+| `ArenaRoom.onCreate(options)` | sanea `bots` (0..`TEAM_SIZE`) e cria os bots |
+| `ArenaRoom.publish()` | metadata + `lock()`/`unlock()` + `updateLobby()` |
+
+**Sem polling.** A lista vem da `LobbyRoom` nativa do Colyseus (registrada em
+`app.config.ts`), que empurra `rooms`, `+` e `-`. Quem dispara a atualização é a
+própria `ArenaRoom`, chamando `updateLobby()` ao criar, ao alguém entrar e ao
+alguém sair.
+
+**Slots.** Cada time tem `TEAM_SIZE` (5) slots. Quem cria escolhe quantos
+nascem bot; o resto fica vazio. Entrando um humano: **slot vazio primeiro**, e
+só se o time estiver completo é que um bot cede o lugar (`World.findBot`, o
+primeiro encontrado — quem escolhe é o servidor). Sem slot e sem bot, `onJoin`
+lança `ServerError(4001)` e o cliente mostra "sala cheia".
+
+**Sem `WAITING`/`PLAYING`.** A arena é deathmatch contínuo — não há início nem
+fim de partida, a simulação roda desde `onCreate`. Um campo de status seria
+estado redundante (e mais um jeito de divergir do `World`). O que importa é
+"aceita gente?", e isso é o `lock()` nativo: sala travada some da listagem e
+recusa entrada. Ela destrava sozinha quando abre vaga.
+
+**Saída.** `onLeave` mantém os 20 s de reconexão que já existiam; expirada a
+janela, `dropPlayer` remove o ator e **repõe um bot só até `botsPerTeam`** — o
+número escolhido na criação. Assim uma sala feita com 0 bots nunca ganha bots,
+e o slot simplesmente volta a ficar vago.
+
+**Corrida pelo último slot.** `onJoin` roda uma vez por vez na sala, e a decisão
+(`pickTeam` → `hasSlot`) acontece dentro dele: o segundo pedido já enxerga o
+slot ocupado e é recusado. Não há checagem no cliente para burlar.
 
 ### Nome do jogador
 

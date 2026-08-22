@@ -1,7 +1,10 @@
 import { Start } from './scenes/Start.js';
 import { Arena } from './scenes/Arena.js';
 import { askPlayerName, hideNameGate } from './ui/NameGate.js';
-import { storedPlayerName, storePlayerName } from './net/netconfig.js';
+import { openLobby, hideLobby } from './ui/Lobby.js';
+import {
+    storedPlayerName, storePlayerName, setJoinChoice, resolveJoinChoice, resolveEndpoint
+} from './net/netconfig.js';
 
 /**
  * Dois modos, escolhidos pela URL:
@@ -24,6 +27,20 @@ if (offline || storedPlayerName()) {
 } else {
     storePlayerName(await askPlayerName());
 }
+
+/**
+ * Lobby: fica entre o nome e a partida. Roda aqui, também antes do Phaser,
+ * pela mesma razão da tela de nome — sem o jogo no ar, nenhuma captura de
+ * teclado disputa com o HTML.
+ *
+ * Pulado no modo offline (não há servidor) e quando `?room=` já diz em qual
+ * sala entrar.
+ */
+if (!offline && !resolveJoinChoice()) {
+    const client = new Colyseus.Client(resolveEndpoint());
+    setJoinChoice(await openLobby(client));
+}
+hideLobby();
 
 const config = {
     type: Phaser.AUTO,

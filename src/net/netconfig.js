@@ -16,6 +16,30 @@
 const SERVER_ENDPOINT = "wss://chess-armageddon-server.onrender.com";
 
 export const ROOM_NAME = "arena";
+export const LOBBY_ROOM_NAME = "lobby";
+
+/**
+ * Escolha feita no lobby: criar uma sala nova ou entrar numa existente.
+ *
+ * Fica aqui (e não num parâmetro da cena) porque quem decide é o `main.js`,
+ * ANTES de o Phaser existir — a cena só lê na hora de conectar.
+ *
+ * `?room=<id>` na URL pula o lobby e entra direto: serve para abrir a mesma
+ * sala em duas abas sem repetir o fluxo.
+ *
+ * @type {{ create?: true, bots?: number, roomId?: string } | null}
+ */
+let joinChoice = null;
+
+export function setJoinChoice(choice) {
+    joinChoice = choice;
+}
+
+export function resolveJoinChoice() {
+    const fromQuery = new URLSearchParams(window.location.search).get("room");
+    if (fromQuery) return { roomId: fromQuery };
+    return joinChoice;
+}
 
 export function resolveEndpoint() {
     const fromQuery = new URLSearchParams(window.location.search).get("server");

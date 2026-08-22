@@ -2,13 +2,14 @@ import ArenaActor from '../entities/ArenaActor.js';
 import InputManager from '../utils/InputManager.js';
 import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
+import XpBar from '../ui/XpBar.js';
 import {
     ATTACK_MOVE_FACTOR, attackRecoveryMs, attackWindupMs, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
-import { ROOM_NAME, resolveEndpoint, resolvePlayerName } from '../net/netconfig.js';
+import { ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice } from '../net/netconfig.js';
 
 /**
  * Cena multiplayer. Toda a regra do jogo mora em `chess-armageddon-server`;
@@ -157,6 +158,12 @@ export class Arena extends Phaser.Scene {
         this.inputs = new InputManager(this);
         this.deathScreen = new DeathScreen(this);
         this.scoreboard = new Scoreboard(this, () => this.scoreRows());
+        // XP vem do estado do servidor; enquanto o primeiro patch não chega
+        // (ou o campo ainda não mudou de valor), vale 0.
+        this.xpBar = new XpBar(this, () => {
+            const st = this.localState();
+            return st && Number.isFinite(st.xp) ? st.xp : 0;
+        });
 
         this.createHud();
 
@@ -242,9 +249,30 @@ export class Arena extends Phaser.Scene {
 
         try {
             const client = new Colyseus.Client(endpoint);
-            this.room = await client.joinOrCreate(ROOM_NAME, { name: resolvePlayerName() });
+            // O lobby já decidiu: criar uma sala (com os bots pedidos) ou entrar
+            // numa existente. `joinOrCreate` continua sendo o caminho de quem
+            // chegou sem passar pelo lobby (por exemplo, se ele ficou fora do ar).
+            const escolha = resolveJoinChoice();
+            const name = resolvePlayerName();
+
+            if (escolha && escolha.roomId) {
+                this.room = await client.joinById(escolha.roomId, { name });
+            } else if (escolha && escolha.create) {
+                this.room = await client.create(ROOM_NAME, { name, bots: escolha.bots });
+            } else {
+                this.room = await client.joinOrCreate(ROOM_NAME, { name });
+            }
         } catch (error) {
             console.error(error);
+
+            // 4001 é o "sala cheia" que a `ArenaRoom` lança quando não há slot
+            // nem bot para ceder o lugar. Recarregar devolve o jogador ao
+            // lobby, que a essa altura já recebeu a sala como cheia.
+            if (error && error.code === 4001) {
+                this.statusText.setText('Sala cheia.\nRecarregue a pagina para escolher outra.');
+                return;
+            }
+
             this.statusText.setText(
                 `Falha ao conectar em ${endpoint}\n` +
                 `${error && error.message ? error.message : error}\n` +
@@ -353,6 +381,7 @@ export class Arena extends Phaser.Scene {
         }
 
         this.inputs.setDashCooldown(this.dashCooldownRatio(localState));
+        this.xpBar.update(time);
 
         this.followLocalActor();
         this.scoreboard.update(time);
