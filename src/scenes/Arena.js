@@ -6,7 +6,7 @@ import XpBar from '../ui/XpBar.js';
 import {
     ATTACK_MOVE_FACTOR, attackRecoveryMs, attackWindupMs, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
-    RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT
+    RANKS, RANK_ORDER, TEAM_ORDER
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice } from '../net/netconfig.js';
