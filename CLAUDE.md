@@ -13,7 +13,8 @@ Jogo 2D top-down de arena feito em **Phaser 3.90.0** (atenção: `project.config
 
 ## Comandos
 
-Não há build system, package.json, linter ou testes. Phaser (~7,8 MB) e o SDK do Colyseus (~440 KB) são *vendorizados* em `phaser.js` e `colyseus.js` na raiz e carregados por `<script>` em [index.html](index.html) — ou seja, `Phaser` e `Colyseus` são **globais**, nunca importados nos módulos de `src/`.
+Não há build system, package.json nem linter **no cliente** (os testes vivem no
+servidor: `cd ../chess-armageddon-server && npm test`). Phaser (~7,8 MB) e o SDK do Colyseus (~440 KB) são *vendorizados* em `phaser.js` e `colyseus.js` na raiz e carregados por `<script>` em [index.html](index.html) — ou seja, `Phaser` e `Colyseus` são **globais**, nunca importados nos módulos de `src/`.
 
 Como `src/main.js` é carregado com `type="module"`, abrir `index.html` via `file://` **não funciona** (CORS). Sirva por HTTP a partir da raiz do projeto:
 
@@ -89,10 +90,16 @@ A cadência é uma **taxa por segundo** convertida com `1 - exp(-taxa * dt)`, n�
 
 ### Quando o bot carrega o golpe
 
-Carregar **não** rende mais dano por segundo: o ciclo normal (cooldown 700 ms + windup 200 ms) tira ~28/s, e o carregado, com a espera do `chargeTime`, fica em ~26/s. Por isso o bot não carrega por padrão — carregar é ferramenta de situação. `botShouldCharge` (servidor) e `AIPlayer.shouldCharge` (offline) implementam a mesma regra:
+Carregar **não** rende mais dano por segundo: o ciclo normal do bot (cooldown 700 ms + windup 160 ms) tira ~29/s, e o carregado, somando `chargeTime` + windup 260 + recuperação 340, fica em torno de ~24/s. Por isso o bot não carrega por padrão — carregar é ferramenta de situação. `botShouldCharge` (servidor) e `AIPlayer.shouldCharge` (offline) implementam a mesma regra:
 
 1. **Finalização** — a vida do alvo está na janela em que o carregado mata e o normal não (`> DAMAGE_NORMAL` e `<= DAMAGE_CHARGED`). Abater promove e dá aura, o que vale bem mais que a diferença de dano.
 2. **Aproximação** — o alvo está fora do alcance normal mas dentro do carregado, que dobra o alcance. Carregar aí é de graça: não havia golpe possível de qualquer forma.
+
+O bot compara os dois extremos da escala — `chargeAreaMult(0)` e
+`chargeAreaMult(1)` — em vez dos antigos `1` e `2` cravados. Ele solta a carga
+cheia (não parcial): decidir soltar no meio exigiria prever o movimento do alvo,
+e o ganho não paga a complexidade. Os limites são os mesmos do jogador; não
+existe número especial para bot.
 
 Daí `canHit`/`botCanHit` receberem o `mult` (1 ou 2), o mesmo fator que `executeAttackHit` aplica às dimensões da forma.
 
@@ -104,12 +111,14 @@ No online o `chargeRatio` do bot também é atualizado, então o brilho de carga
 
 Todo golpe que **conecta** empurra o alvo para longe do atacante. A direção sai do centro da elipse do atacante para a do alvo, calculada por alvo — um golpe que pega três inimigos espalha os três em leque, cada um para o lado em que estava.
 
-A força é `knockbackSpeed(charged, massaDoAlvo)`, definida nos dois lados ([Hierarchy.js](src/constants/Hierarchy.js) e `constants.ts`). Duas escolhas deliberadas de balanceamento, ambas para não ficar discrepante:
+A força é `knockbackSpeed(power, massaDoAlvo)`, definida nos dois lados ([Hierarchy.js](src/constants/Hierarchy.js) e `constants.ts`), onde `power` é a potência da carga (0..1). Duas escolhas deliberadas de balanceamento, ambas para não ficar discrepante:
 
-- o carregado multiplica por **1,8**, não por 2 como o dano: dobrar dano e empurrão juntos arremessaria o alvo para fora da briga sem chance de revidar;
+- a carga cheia multiplica por **1,8**, não por 2 como o dano: dobrar dano e empurrão juntos arremessaria o alvo para fora da briga sem chance de revidar;
 - divide pela **raiz** da massa, não pela massa: com a massa crua a torre (massa 4) mal se mexeria e o peão voaria quatro vezes mais longe.
 
-O empurrão decai exponencialmente (`KNOCKBACK_DECAY_MS` de constante de tempo), então o deslocamento total é ≈ `velocidade × τ`: 66 px num peão, 119 carregado, 33 numa torre.
+O empurrão decai exponencialmente (`KNOCKBACK_DECAY_MS` de constante de tempo), então o deslocamento total é ≈ `velocidade × τ`: 63 px num peão com golpe leve, 113 com carga cheia, 33 numa torre.
+
+Empurrões **não somam**: `receiveKnockback` substitui a velocidade em curso em vez de acumular, então dois acertos seguidos não arremessam ninguém.
 
 Três armadilhas que já custaram caro aqui:
 
@@ -141,7 +150,44 @@ Formas suportadas: `rectangle`, `circle`, `lshape`, `diamond`. **Adicionar uma n
 
 Sequência: `performAttack()` marca `_isAttacking`, e um `delayedCall(200)` aplica o hit e finaliza. `_attackHitEnemies` (Set) evita dano duplo no mesmo golpe.
 
-**Ataque carregado:** segurar o botão por `rank.chargeTime` dobra alcance (`mult = 2`) e dano (`DAMAGE_CHARGED` em vez de `DAMAGE_NORMAL`), e multiplica o empurrão por 1,8.
+**Carga contínua.** Segurar o botão não escolhe entre dois golpes: define uma
+**potência** `power = tempo segurado / rank.chargeTime`, limitada a 1. Era um
+booleano `charged`; hoje dano, área, empurrão, windup e recuperação saem todos
+dessa potência, e os extremos continuam valendo exatamente o que valiam.
+
+| Carga | Dano | Área | Empurrão num peão | Windup | Recuperação |
+| --- | --- | --- | --- | --- | --- |
+| 0% (toque) | 25,0 | 1,00× | 63 px | 160 ms | 60 ms |
+| 25% | 27,7 | 1,25× | 71 px | 185 ms | 130 ms |
+| 50% | 33,2 | 1,50× | 83 px | 210 ms | 200 ms |
+| 75% | 40,8 | 1,75× | 98 px | 235 ms | 270 ms |
+| 100% | 50,0 | 2,00× | 113 px | 260 ms | 340 ms |
+
+Cada atributo é `min + (max - min) * power^expoente`, e **o expoente é o botão
+de balanceamento**:
+
+- **dano** (`DAMAGE_CHARGE_EXP` 1,6) — concentra o ganho no fim: parar no meio
+  da carga não é jogada ótima, ou se bate rápido ou se vai até o fim;
+- **área** (`AREA_CHARGE_EXP` 1) — linear de propósito. É a área que decide se
+  o golpe acerta, e o jogador (e o bot, via `botCanHit`) precisa conseguir
+  prever onde ele pega;
+- **empurrão** (`KNOCKBACK_CHARGE_EXP` 1,3) — no meio dos dois, para uma carga
+  curta não jogar o alvo para fora do próprio alcance de quem bateu.
+
+**Os tetos não dependem de ninguém se comportar.** O clamp mora dentro de
+`chargePower()`: segurar dez segundos, mandar `"a" 0` vinte vezes seguidas ou
+travar o jogo a 5 FPS dá exatamente o mesmo golpe de 100%.
+
+**Leve × carregado** é troca de tempo por alcance, não de DPS. O ciclo leve
+(160 + 60 ms) repete a cada 220 ms; o cheio custa `chargeTime` + 260 + 340 ms.
+Contra um alvo só, a invulnerabilidade de 500 ms (`HIT_INVULN_MS`) limita os
+dois, e o leve rende mais dano por segundo. O carregado paga por: alcance
+dobrado (pega quem está fugindo), empurrão que cria espaço, e matar em dois
+golpes em vez de quatro.
+
+**Recuperação (`attackRecoveryMs`)** é nova e vale para humanos e bots: antes o
+humano não tinha cooldown nenhum e segurar o botão rendia golpe atrás de golpe.
+É ela que faz o servidor recusar carga cedo demais — o freio de spam.
 
 A máquina de carga (`startCharging` / `updateCharge` / `releaseCharge` / `cancelCharge`) mora no `PlayerBase`, não no `HumanPlayer`: humano e bot usam exatamente a mesma, e o que muda entre eles é só **quem decide** apertar e soltar — a entrada do jogador de um lado, `AIPlayer.decideAttack`/`stepCharge` do outro.
 
@@ -251,6 +297,7 @@ cliente manda entrada e desenha o estado que volta.
 | [src/entities/ArenaActor.js](src/entities/ArenaActor.js) | **só desenho**: sprite, barra de vida, hitbox, aura, brilho de carga, forma do golpe |
 | [src/net/netconfig.js](src/net/netconfig.js) | endpoint do servidor e nome do jogador |
 | [src/utils/DashFx.js](src/utils/DashFx.js) | efeito visual do dash, usado pelos dois modos |
+| [src/utils/ChargeGlow.js](src/utils/ChargeGlow.js) | indicador de carga do ataque, usado pelos dois modos |
 | [src/ui/NameGate.js](src/ui/NameGate.js) | tela de entrada do nome (HTML, roda antes do Phaser) |
 
 Reaproveitados sem alteração dos dois modos: `InputManager`, `DeathScreen`,
@@ -356,6 +403,14 @@ fora do que aparece na tela:
 2. **A fórmula do centro da elipse** — `ArenaActor.getEllipseCenter()` aqui e
    `Actor.ellipseCenter()` lá. Ela reproduz o `body.center` do Arcade sem ter um
    corpo: `centerY = y + altura/2 - collisionRx + collisionRy * 4/3`.
+
+O golpe trafega como `ActorState.atkPower` (uint8, 0..100): é a potência **já
+decidida pelo servidor**, não o tempo de carga. O cliente desenha a área com
+esse número, então a forma que aparece na tela é a mesma que causou o dano — se
+cada lado recalculasse a partir do tempo, os arredondamentos divergiriam.
+
+O cliente nunca manda potência, dano ou área: só `"a" 1` e `"a" 0`. Quem
+cronometra é `World.releaseAttack`, com o relógio da sala.
 
 Adicionar uma forma de ataque nova agora exige **cinco** `switch` em sincronia:
 `drawAttackVisual()` do `PlayerBase` (offline), `drawAttackVisual()` do

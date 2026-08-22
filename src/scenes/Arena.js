@@ -3,7 +3,8 @@ import InputManager from '../utils/InputManager.js';
 import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
 import {
-    ATTACK_MOVE_FACTOR, DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
+    ATTACK_MOVE_FACTOR, attackRecoveryMs, attackWindupMs, chargePower,
+    DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
@@ -65,7 +66,7 @@ const INPUT_HISTORY_MAX = 120;
  *
  * Só que o servidor pode nunca confirmar (morri no caminho, não estava
  * carregando). Este teto destrava a previsão nesse caso; precisa ser folgado o
- * bastante para cobrir RTT + ATTACK_WINDUP_MS de quem joga longe.
+ * bastante para cobrir RTT + o windup máximo de quem joga longe.
  */
 const LOCAL_ATTACK_MAX_MS = 1200;
 
@@ -124,6 +125,15 @@ export class Arena extends Phaser.Scene {
 
         this.localCharging = false;
         this.localChargeStart = 0;
+        /**
+         * Espelho local da recuperação do golpe (`Actor.attackReadyAt`).
+         *
+         * Não é autoridade — o servidor recusa sozinho um `startCharge` cedo
+         * demais. Serve para o indicador de carga não acender numa carga que
+         * vai ser recusada, o que apareceria como brilho fantasma seguido de
+         * nada.
+         */
+        this.localAttackReadyAt = 0;
 
         // Golpe já enviado que o servidor ainda não confirmou no estado.
         // Ver `stepPrediction`: a previsão para de andar já no envio.
@@ -405,7 +415,7 @@ export class Arena extends Phaser.Scene {
 
         const attack = this.inputs.getAttackState();
 
-        if (attack.justPressed && localState.alive) {
+        if (attack.justPressed && localState.alive && this.time.now >= this.localAttackReadyAt) {
             this.localCharging = true;
             this.localChargeStart = this.time.now;
             this.room.send('a', 1);
@@ -418,6 +428,15 @@ export class Arena extends Phaser.Scene {
             if (this.localCharging && localState.alive) {
                 this.localAttackPending = true;
                 this.localAttackSentAt = this.time.now;
+
+                // Mesma conta do servidor, com o relógio local: quanto tempo
+                // este golpe ocupa antes de a próxima carga poder começar.
+                const power = chargePower(
+                    this.time.now - this.localChargeStart,
+                    RANKS[RANK_ORDER[localState.rank]].chargeTime
+                );
+                this.localAttackReadyAt = this.time.now
+                    + attackWindupMs(power) + attackRecoveryMs(power);
             }
             this.localCharging = false;
             this.room.send('a', 0);

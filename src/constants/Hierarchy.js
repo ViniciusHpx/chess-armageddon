@@ -14,11 +14,56 @@
  */
 export const ATTACK_MOVE_FACTOR = 0.6;
 
-/**
- * Atraso entre iniciar o golpe e aplicar o dano. Espelha `ATTACK_WINDUP_MS` do
- * servidor; offline era o `200` cravado dentro de `performAttack`.
- */
-export const ATTACK_WINDUP_MS = 200;
+// ---------------------------------------------------------------------------
+// GOLPE: LEVE <-> CARREGADO  (espelho de `constants.ts` do servidor)
+//
+// Toda a diferença entre o toque no botão e a carga cheia sai de um número:
+// `power`, de 0 a 1 (= tempo segurado / `chargeTime` do rank, limitado em 1).
+// O clamp é o teto absoluto de dano, área, empurrão e tempos.
+//
+// Mudar aqui sem mudar lá faz o cliente desenhar um golpe do tamanho errado.
+// ---------------------------------------------------------------------------
+
+export const DAMAGE_LIGHT = 25;
+export const DAMAGE_MAX = 50;
+export const DAMAGE_CHARGE_EXP = 1.6;
+
+export const AREA_MULT_LIGHT = 1;
+export const AREA_MULT_MAX = 2;
+export const AREA_CHARGE_EXP = 1;
+
+export const ATTACK_WINDUP_LIGHT_MS = 160;
+export const ATTACK_WINDUP_MAX_MS = 260;
+
+export const ATTACK_RECOVERY_LIGHT_MS = 60;
+export const ATTACK_RECOVERY_MAX_MS = 340;
+
+/** Potência (0..1) do tempo de carga cumprido, já com o teto aplicado. */
+export function chargePower(elapsedMs, chargeTimeMs) {
+    if (!(chargeTimeMs > 0)) return 1;
+    return Math.min(1, Math.max(0, elapsedMs / chargeTimeMs));
+}
+
+function scaleByCharge(power, min, max, exp) {
+    const p = Math.min(1, Math.max(0, power));
+    return min + (max - min) * Math.pow(p, exp);
+}
+
+export function chargeDamage(power) {
+    return scaleByCharge(power, DAMAGE_LIGHT, DAMAGE_MAX, DAMAGE_CHARGE_EXP);
+}
+
+export function chargeAreaMult(power) {
+    return scaleByCharge(power, AREA_MULT_LIGHT, AREA_MULT_MAX, AREA_CHARGE_EXP);
+}
+
+export function attackWindupMs(power) {
+    return scaleByCharge(power, ATTACK_WINDUP_LIGHT_MS, ATTACK_WINDUP_MAX_MS, 1);
+}
+
+export function attackRecoveryMs(power) {
+    return scaleByCharge(power, ATTACK_RECOVERY_LIGHT_MS, ATTACK_RECOVERY_MAX_MS, 1);
+}
 
 /**
  * DASH / ESQUIVA — espelho de `chess-armageddon-server/src/sim/constants.ts`.
@@ -215,8 +260,9 @@ export function attackHalfBand(rank) {
  * saber quando o carregado mata e o normal não, e duas cópias do número
  * acabariam divergindo.
  */
-export const DAMAGE_NORMAL = 25;
-export const DAMAGE_CHARGED = 50;
+/** Extremos da escala, usados pela IA ao decidir se vale carregar. */
+export const DAMAGE_NORMAL = DAMAGE_LIGHT;
+export const DAMAGE_CHARGED = DAMAGE_MAX;
 
 /**
  * Empurrão do golpe. Espelha as constantes de mesmo nome em `constants.ts`.
@@ -236,6 +282,9 @@ export const KNOCKBACK_SPEED = 420;
  */
 export const KNOCKBACK_CHARGED_FACTOR = 1.8;
 
+/** Expoente do empurrão: entre o do dano (1,6) e o da área (1). */
+export const KNOCKBACK_CHARGE_EXP = 1.3;
+
 export const KNOCKBACK_DECAY_MS = 150;
 
 /** Abaixo disto o empurrão é zerado, para o alvo não ficar à deriva. */
@@ -248,9 +297,9 @@ export const KNOCKBACK_MIN_SPEED = 5;
  * (massa 4) mal se mexeria enquanto o peão (massa 1) voaria quatro vezes mais
  * longe. A raiz mantém a diferença perceptível sem ficar discrepante.
  */
-export function knockbackSpeed(charged, targetMass) {
-    const force = charged ? KNOCKBACK_SPEED * KNOCKBACK_CHARGED_FACTOR : KNOCKBACK_SPEED;
-    return force / Math.sqrt(Math.max(targetMass, 0.01));
+export function knockbackSpeed(power, targetMass) {
+    const fator = scaleByCharge(power, 1, KNOCKBACK_CHARGED_FACTOR, KNOCKBACK_CHARGE_EXP);
+    return (KNOCKBACK_SPEED * fator) / Math.sqrt(Math.max(targetMass, 0.01));
 }
 
 /** Dimensões do mapa. Espelha WORLD_WIDTH/WORLD_HEIGHT do servidor. */

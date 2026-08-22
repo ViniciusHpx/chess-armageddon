@@ -1,7 +1,7 @@
 import PlayerBase from './PlayerBase.js';
 import {
     RANKS, attackHalfBand, attackReach, ATTACK_MOVE_FACTOR, DAMAGE_NORMAL, DAMAGE_CHARGED,
-    ATTACK_WINDUP_MS, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
+    attackWindupMs, chargeAreaMult, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
 } from '../constants/Hierarchy.js';
 
 /**
@@ -197,7 +197,10 @@ export default class AIPlayer extends PlayerBase {
         if (this._dodgeRolledFor === impactoEm) return false;
 
         const now = this.scene.time.now;
-        const elapsed = ATTACK_WINDUP_MS - (impactoEm - now);
+        // O windup do atacante depende da carga dele: golpe cheio dá mais
+        // tempo de reação, e é justamente o que compensa esquivar.
+        const janela = attackWindupMs(threat._chargePower);
+        const elapsed = janela - (impactoEm - now);
         if (elapsed < BOT_DODGE_REACTION_MS) return false;
 
         const from = threat.getEllipseCenter();
@@ -205,7 +208,7 @@ export default class AIPlayer extends PlayerBase {
         const dx = to.x - from.x;
         const dy = to.y - from.y;
 
-        const mult = threat._isChargedAttack ? 2 : 1;
+        const mult = chargeAreaMult(threat._chargePower);
         const perigo = (threat.collisionRx + attackReach(threat._currentRank) * mult
             + this.collisionRx) * BOT_DODGE_RANGE_SLACK;
         if (dx * dx + dy * dy > perigo * perigo) return false;
@@ -223,8 +226,9 @@ export default class AIPlayer extends PlayerBase {
         this._attackCooldown -= delta;
         if (this._attackCooldown > 0 || !target) return;
 
-        const alcancaNormal = this.canHit(target, 1);
-        const alcancaCarregado = this.canHit(target, 2);
+        // Extremos da escala: o golpe que sai agora e o da carga cheia.
+        const alcancaNormal = this.canHit(target, chargeAreaMult(0));
+        const alcancaCarregado = this.canHit(target, chargeAreaMult(1));
         if (!alcancaNormal && !alcancaCarregado) return;
 
         // Taxa por segundo convertida na chance deste quadro.
@@ -280,7 +284,7 @@ export default class AIPlayer extends PlayerBase {
 
         const segurando = this.scene.time.now - this._chargeStartTime;
         const esperouDemais = segurando >= this._currentRank.chargeTime + CHARGE_HOLD_MS;
-        if (!this.canHit(target, 2) && !esperouDemais) return;
+        if (!this.canHit(target, chargeAreaMult(1)) && !esperouDemais) return;
 
         this.setFlipX(target.x < this.x);
         this.releaseCharge(enemies);
@@ -295,7 +299,7 @@ export default class AIPlayer extends PlayerBase {
      * frente. Antes eram 100 px fixos para todo rank, medidos de `x`/`y` em vez
      * do centro da elipse de onde o dano realmente sai.
      *
-     * @param {number} mult 1 para golpe normal, 2 para carregado. É o mesmo
+     * @param {number} mult Multiplicador de área a testar. É o mesmo
      *        fator que `executeAttackHit` aplica às dimensões da forma.
      */
     canHit(enemy, mult) {

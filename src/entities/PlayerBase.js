@@ -1,11 +1,11 @@
 import {
-    ATTACK_WINDUP_MS,
+    attackRecoveryMs, attackWindupMs, chargeAreaMult, chargeDamage, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
-    DAMAGE_NORMAL, DAMAGE_CHARGED,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
+import { paintChargeGlow } from '../utils/ChargeGlow.js';
 
 export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y, textureKey, team, debugColor) {
@@ -58,9 +58,15 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.aura = 0;
 
         // Flag para ataque carregado
-        this._isChargedAttack = false;
+        /**
+         * Potência do golpe em curso, de 0 (toque) a 1 (carga cheia).
+         * Era o booleano `_isChargedAttack`; dano, área e empurrão saem dela.
+         */
+        this._chargePower = 0;
         /** Instante do impacto do golpe em curso (0 = nenhum). */
         this._attackHitAt = 0;
+        /** Instante a partir do qual pode atacar ou carregar de novo. */
+        this._attackReadyAt = 0;
 
         // Máquina de carga do ataque, compartilhada por humano e bot.
         this._isCharging = false;
@@ -222,9 +228,9 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
      *
      * @param {PlayerBase} attacker Quem bateu; a direção sai do centro da
      *        elipse dele para a desta peça.
-     * @param {boolean} charged Se o golpe estava carregado.
+     * @param {number} power Potência do golpe, 0..1.
      */
-    receiveKnockback(attacker, charged) {
+    receiveKnockback(attacker, power) {
         const from = attacker.getEllipseCenter();
         const to = this.getEllipseCenter();
         let dx = to.x - from.x;
@@ -239,7 +245,10 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             length = 1;
         }
 
-        const speed = knockbackSpeed(charged, this.getCollisionMass());
+        // O empurrão SUBSTITUI o anterior em vez de somar: golpes em sequência
+        // não acumulam velocidade e ninguém sai arremessado por levar dois
+        // acertos seguidos.
+        const speed = knockbackSpeed(power, this.getCollisionMass());
         this._knockbackVx = (dx / length) * speed;
         this._knockbackVy = (dy / length) * speed;
     }
@@ -465,25 +474,18 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.aura = 0;
     }
 
+    /** Indicador de carga; o desenho vive em `ChargeGlow.js`, usado nos dois modos. */
     drawChargeGlow() {
         this.chargeGlowGraphics.clear();
         if (!this._isCharging) return;
 
-        const offsetX = 20;
-        const offsetY = -50;
-        const x = this.x + offsetX;
-        const y = this.y + offsetY;
-
-        const ratio = Phaser.Math.Clamp(this._chargeRatio, 0, 1);
-        const r = 255;
-        const g = Phaser.Math.Linear(255, 0, ratio);
-        const b = Phaser.Math.Linear(255, 0, ratio);
-        const color = Phaser.Display.Color.GetColor(r, g, b);
-
-        this.chargeGlowGraphics.fillStyle(color, 0.9);
-        this.chargeGlowGraphics.fillCircle(x, y, 8);
-        this.chargeGlowGraphics.lineStyle(1, color, 1);
-        this.chargeGlowGraphics.strokeCircle(x, y, 8);
+        paintChargeGlow(
+            this.chargeGlowGraphics,
+            this.x + 20,
+            this.y - 50,
+            this._chargeRatio,
+            this.scene.time.now
+        );
     }
 
     /**
@@ -556,14 +558,21 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     performAttack(enemyGroup) {
         if (this._isAttacking) return;
+        if (this.scene.time.now < this._attackReadyAt) return;
         this._isAttacking = true;
         this._attackHitEnemies.clear();
         this._attackEnemyGroup = enemyGroup;
         // Quando este golpe vai acertar. Serve de chave para a esquiva dos bots
         // (`AIPlayer.tryDodge`), que precisa saber se ainda dá tempo de reagir.
-        this._attackHitAt = this.scene.time.now + ATTACK_WINDUP_MS;
+        // O atraso cresce com a carga: o toque rápido sai antes, o golpe cheio
+        // se anuncia por mais tempo.
+        const windup = attackWindupMs(this._chargePower);
+        this._attackHitAt = this.scene.time.now + windup;
+        // Recuperação depois do impacto: é o freio de spam e a desvantagem do
+        // golpe carregado.
+        this._attackReadyAt = this._attackHitAt + attackRecoveryMs(this._chargePower);
 
-        this.scene.time.delayedCall(ATTACK_WINDUP_MS, () => {
+        this.scene.time.delayedCall(windup, () => {
             // Pode ter morrido/sido desativado durante o delay
             if (this.active) this.executeAttackHit(enemyGroup);
             this.finishAttack();
@@ -577,7 +586,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const startX = center.x + dir * this.collisionRx;
         const startY = center.y;
 
-        const mult = this._isChargedAttack ? 2 : 1;
+        const mult = chargeAreaMult(this._chargePower);
 
         this.attackGraphics.clear();
 
@@ -673,8 +682,11 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const startX = attackerCenter.x + dir * this.collisionRx;
         const startY = attackerCenter.y;
 
-        const mult = this._isChargedAttack ? 2 : 1;
-        const damage = this._isChargedAttack ? DAMAGE_CHARGED : DAMAGE_NORMAL;
+        // Área e dano da MESMA potência, os dois já com teto embutido
+        // (AREA_MULT_MAX e DAMAGE_MAX). A geometria abaixo não mudou: continua
+        // recebendo um multiplicador, agora fracionário.
+        const mult = chargeAreaMult(this._chargePower);
+        const damage = chargeDamage(this._chargePower);
 
         switch (atk.type) {
             case 'rectangle': {
@@ -823,6 +835,9 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     startCharging() {
         if (this._isAttacking || this._isCharging) return;
+        // Recuperação do golpe anterior: segurar o botão sem parar não encadeia
+        // golpes.
+        if (this.scene.time.now < this._attackReadyAt) return;
         this._isCharging = true;
         this._chargeStartTime = this.scene.time.now;
         this._chargeComplete = false;
@@ -839,8 +854,9 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Solta a carga: vira golpe carregado se o tempo do rank foi cumprido, e
-     * golpe normal se soltou antes.
+     * Solta a carga. A potência é contínua: um toque rápido sai em 0 (golpe
+     * leve) e o `chargeTime` do rank cumprido sai em 1 (golpe máximo). Segurar
+     * além disso não adianta — o teto está dentro de `chargePower`.
      *
      * @param {Phaser.GameObjects.Group} enemyGroup Alvos do golpe.
      */
@@ -848,12 +864,12 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         if (!this._isCharging) return;
 
         const elapsed = this.scene.time.now - this._chargeStartTime;
-        const charged = elapsed >= this._currentRank.chargeTime;
+        const power = chargePower(elapsed, this._currentRank.chargeTime);
         this.cancelCharge();
 
         if (this._isAttacking) return;
 
-        this._isChargedAttack = charged;
+        this._chargePower = power;
         this.performAttack(enemyGroup);
     }
 
@@ -876,7 +892,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         // Cada alvo é empurrado na SUA direção (deste atacante para ele), então
         // um golpe que pega três inimigos os espalha em leque, não em bloco.
-        enemy.receiveKnockback(this, this._isChargedAttack);
+        enemy.receiveKnockback(this, this._chargePower);
 
         if (killed) {
             this.addAuraFromKill(enemy);
@@ -891,6 +907,6 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._isAttacking = false;
         this._attackHitEnemies.clear();
         this._attackEnemyGroup = null;
-        this._isChargedAttack = false;
+        this._chargePower = 0;
     }
 }

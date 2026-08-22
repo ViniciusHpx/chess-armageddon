@@ -1,5 +1,6 @@
-import { RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, skinKey } from '../constants/Hierarchy.js';
+import { RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, chargeAreaMult, skinKey } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
+import { paintChargeGlow } from '../utils/ChargeGlow.js';
 
 /**
  * Atraso de renderização dos personagens que não são o jogador local, em ms.
@@ -374,26 +375,30 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
      * para o brilho responder no mesmo quadro do clique; os outros usam o
      * progresso que veio do servidor.
      */
+    /**
+     * Indicador de carga, o mesmo desenho do offline. O que muda é a fonte do
+     * progresso: relógio local para o próprio jogador (esperar um RTT pelo
+     * feedback do próprio botão faria o indicador parecer travado) e o campo
+     * `chargeRatio` do estado para os outros.
+     */
     drawChargeGlow() {
         this.chargeGlowGraphics.clear();
 
         const charging = this.isLocal ? this.localCharging : this.actorState.charging;
         if (!charging) return;
 
-        const ratio = Phaser.Math.Clamp(
-            this.isLocal ? this.localChargeRatio : this.actorState.chargeRatio / 100,
-            0, 1
+        const doEstado = this.actorState.chargeRatio;
+        const ratio = this.isLocal
+            ? this.localChargeRatio
+            : (Number.isFinite(doEstado) ? doEstado / 100 : 0);
+
+        paintChargeGlow(
+            this.chargeGlowGraphics,
+            this.x + 20,
+            this.y - 50,
+            ratio,
+            this.scene.time.now
         );
-
-        const x = this.x + 20;
-        const y = this.y - 50;
-        const g = Phaser.Math.Linear(255, 0, ratio);
-        const color = Phaser.Display.Color.GetColor(255, g, g);
-
-        this.chargeGlowGraphics.fillStyle(color, 0.9);
-        this.chargeGlowGraphics.fillCircle(x, y, 8);
-        this.chargeGlowGraphics.lineStyle(1, color, 1);
-        this.chargeGlowGraphics.strokeCircle(x, y, 8);
     }
 
     /**
@@ -406,7 +411,14 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         const dir = this.flipX ? -1 : 1;
         const startX = center.x + dir * this.collisionRx;
         const startY = center.y;
-        const mult = this.actorState.charged ? 2 : 1;
+        // Mesma área que o servidor usou para calcular o dano: o número chega
+        // pronto no estado (`atkPower`), em vez de o cliente recalcular a
+        // partir do tempo e desenhar um golpe de tamanho diferente do que bate.
+        // `Number.isFinite`: com reflection de schema, campo que ainda não mudou
+        // de valor nunca vira patch e chega `undefined` — sem a guarda, a área
+        // viraria NaN e o golpe sumiria da tela.
+        const bruto = this.actorState.atkPower;
+        const mult = chargeAreaMult(Number.isFinite(bruto) ? bruto / 100 : 0);
 
         const g = this.attackGraphics;
         g.setDepth(this.y + 1);
