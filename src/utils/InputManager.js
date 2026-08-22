@@ -1,3 +1,34 @@
+/** Botão de ataque: vermelho cheio, opaco o bastante para ler no mapa claro. */
+const ATTACK_BTN_COLOR = 0xd91b1b;
+const ATTACK_BTN_ALPHA = 0.75;
+const ATTACK_BTN_STROKE = 0x6e0000;
+
+const SWORD_TEXTURE = 'attack-sword-icon';
+
+/**
+ * Botão de dash: menor que o de ataque e logo abaixo/à esquerda dele, dentro
+ * do arco natural do polegar direito, longe o bastante para não haver toque
+ * errado (a distância entre centros é maior que a soma dos raios).
+ */
+const DASH_BTN_COLOR = 0x2f7fd6;
+const DASH_BTN_ALPHA = 0.7;
+const DASH_BTN_STROKE = 0x0d3a68;
+const DASH_BTN_RADIUS = 34;
+
+/** Opacidade do botão enquanto o dash está em recarga. */
+const DASH_BTN_DISABLED_ALPHA = 0.3;
+
+const DASH_TEXTURE = 'dash-icon';
+
+/**
+ * Passo mínimo do indicador de recarga para valer um redesenho.
+ *
+ * O `Graphics` do indicador é limpo e redesenhado, então redesenhar a cada
+ * quadro seria trabalho jogado fora: 0,02 dá ~50 redesenhos ao longo de todo o
+ * cooldown, o suficiente para o movimento parecer contínuo.
+ */
+const DASH_CD_STEP = 0.02;
+
 export default class InputManager {
     constructor(scene) {
         this.scene = scene;
@@ -8,6 +39,7 @@ export default class InputManager {
             up: 'W', down: 'S', left: 'A', right: 'D'
         });
         this.spaceKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        this.dashKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
 
         // Joystick virtual
         this.joystickActive = false;
@@ -22,6 +54,7 @@ export default class InputManager {
 
         this.createVirtualJoystick(baseX, baseY, baseRadius, thumbRadius);
         this.createAttackButton();
+        this.createDashButton();
 
         // Estado do ataque unificado
         this._attackHeld = false;
@@ -32,6 +65,11 @@ export default class InputManager {
         this._prevTouchAttackDown = false;   // estado anterior para detecção de borda
 
         this._lastSpaceDown = false;         // estado anterior do espaço
+
+        // Estado do dash. Só tem borda de descida: dash é um toque, não um
+        // botão que se segura como o de ataque.
+        this._dashJustPressed = false;
+        this._lastShiftDown = false;
 
         this.setupTouchEvents();
     }
@@ -48,11 +86,166 @@ export default class InputManager {
 
     createAttackButton() {
         const { width, height } = this.scene.cameras.main;
-        this.attackBtn = this.scene.add.circle(width - 100, height - 120, 50, 0xff0000, 0.4)
+        const x = width - 100;
+        const y = height - 120;
+        const raio = 50;
+
+        this.attackBtn = this.scene.add.circle(x, y, raio, ATTACK_BTN_COLOR, ATTACK_BTN_ALPHA)
             .setInteractive()
             .setScrollFactor(0)
             .setDepth(100);
+        this.attackBtn.setStrokeStyle(3, ATTACK_BTN_STROKE, 0.9);
+
+        this.createSwordTexture();
+
+        // Espada na diagonal: em pé ela some no meio do círculo.
+        this.attackIcon = this.scene.add.image(x, y, SWORD_TEXTURE)
+            .setScrollFactor(0)
+            .setDepth(101)
+            .setAngle(-45)
+            .setScale(0.78)
+            .setAlpha(0.95);
+
         // A lógica de ataque é gerenciada via estado, não diretamente aqui
+    }
+
+    /**
+     * Ícone de espada desenhado uma vez e virado textura.
+     *
+     * Não há arte de espada em `assets/`, e um glifo de texto (⚔) depende da
+     * fonte do aparelho — no Android costuma sair como quadrado vazio.
+     */
+    createSwordTexture() {
+        if (this.scene.textures.exists(SWORD_TEXTURE)) return;
+
+        const g = this.scene.make.graphics({ x: 0, y: 0, add: false });
+
+        // Lâmina longa e fina: gorda demais o ícone vira um X no botão.
+        g.fillStyle(0xffffff, 1);
+        g.fillPoints([
+            { x: 48, y: 4 },
+            { x: 55, y: 20 },
+            { x: 55, y: 60 },
+            { x: 41, y: 60 },
+            { x: 41, y: 20 }
+        ], true);
+
+        // Vinco central, um tom abaixo, para a lâmina não virar um borrão.
+        g.fillStyle(0xc9cfdd, 1);
+        g.fillRect(47, 16, 2, 44);
+
+        // Guarda, cabo e pomo.
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(27, 60, 42, 8);
+        g.fillRect(43, 68, 10, 16);
+        g.fillCircle(48, 86, 6);
+
+        g.generateTexture(SWORD_TEXTURE, 96, 96);
+        g.destroy();
+    }
+
+    createDashButton() {
+        const { width, height } = this.scene.cameras.main;
+        const x = width - 185;
+        const y = height - 68;
+
+        this.dashBtnX = x;
+        this.dashBtnY = y;
+
+        this.dashBtn = this.scene.add.circle(x, y, DASH_BTN_RADIUS, DASH_BTN_COLOR, DASH_BTN_ALPHA)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(100);
+        this.dashBtn.setStrokeStyle(3, DASH_BTN_STROKE, 0.9);
+
+        this.createDashTexture();
+
+        this.dashIcon = this.scene.add.image(x, y, DASH_TEXTURE)
+            .setScrollFactor(0)
+            .setDepth(102)
+            .setScale(0.62)
+            .setAlpha(0.95);
+
+        // Indicador de recarga: uma fatia escura por cima do botão, encolhendo
+        // como um relógio. Fica entre o círculo e o ícone.
+        this.dashCooldownGraphics = this.scene.add.graphics()
+            .setScrollFactor(0)
+            .setDepth(101);
+
+        // -1 força o primeiro desenho; depois só redesenha quando muda.
+        this._dashCooldownRatio = 0;
+        this._dashCooldownDrawn = -1;
+        this.setDashCooldown(0);
+    }
+
+    /**
+     * Ícone do dash: duas setas de velocidade.
+     *
+     * Mesmo motivo da espada do ataque — não há arte em `assets/` e glifo de
+     * texto depende da fonte do aparelho, então é desenhado e virado textura
+     * uma única vez.
+     */
+    createDashTexture() {
+        if (this.scene.textures.exists(DASH_TEXTURE)) return;
+
+        const g = this.scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xffffff, 1);
+
+        // Duas setas apontando para a direita, a de trás menor e mais fraca:
+        // lê como impulso, não como "avançar" de menu.
+        g.fillPoints([
+            { x: 34, y: 12 }, { x: 62, y: 48 }, { x: 34, y: 84 },
+            { x: 34, y: 66 }, { x: 48, y: 48 }, { x: 34, y: 30 }
+        ], true);
+
+        g.fillStyle(0xffffff, 0.65);
+        g.fillPoints([
+            { x: 10, y: 20 }, { x: 33, y: 48 }, { x: 10, y: 76 },
+            { x: 10, y: 60 }, { x: 20, y: 48 }, { x: 10, y: 36 }
+        ], true);
+
+        g.generateTexture(DASH_TEXTURE, 96, 96);
+        g.destroy();
+    }
+
+    /**
+     * Estado do botão de dash. Chamado pela cena a cada quadro com a fração de
+     * cooldown que AINDA FALTA (1 = acabou de usar, 0 = pronto).
+     *
+     * No modo online esse valor vem do servidor (`ActorState.dashCd`), não de
+     * um contador local: o botão mostra a mesma verdade que decide se o dash
+     * vai ser aceito.
+     */
+    setDashCooldown(ratio) {
+        const valor = Math.max(0, Math.min(1, ratio || 0));
+        this._dashCooldownRatio = valor;
+
+        const mudou = Math.abs(valor - this._dashCooldownDrawn) >= DASH_CD_STEP;
+        const virou = (valor === 0) !== (this._dashCooldownDrawn === 0);
+        if (!mudou && !virou) return;
+
+        this._dashCooldownDrawn = valor;
+
+        const pronto = valor === 0;
+        const alpha = pronto ? 1 : DASH_BTN_DISABLED_ALPHA;
+        this.dashBtn.setAlpha(pronto ? DASH_BTN_ALPHA : DASH_BTN_ALPHA * DASH_BTN_DISABLED_ALPHA);
+        this.dashIcon.setAlpha(pronto ? 0.95 : alpha);
+
+        const g = this.dashCooldownGraphics;
+        g.clear();
+        if (pronto) return;
+
+        // Fatia que encolhe no sentido horário a partir do topo.
+        const inicio = -Math.PI / 2;
+        g.fillStyle(0x00121f, 0.55);
+        g.slice(this.dashBtnX, this.dashBtnY, DASH_BTN_RADIUS - 2,
+            inicio, inicio + Math.PI * 2 * valor, false);
+        g.fillPath();
+    }
+
+    /** true enquanto o dash está em recarga (botão desabilitado). */
+    get dashOnCooldown() {
+        return this._dashCooldownRatio > 0;
     }
 
     setupTouchEvents() {
@@ -66,6 +259,17 @@ export default class InputManager {
 
             if (this.attackBtn.getBounds().contains(pointer.x, pointer.y)) {
                 this._touchAttackDown = true;
+            }
+
+            // Em recarga o toque é ignorado aqui mesmo: no online o servidor
+            // recusaria de qualquer forma, e assim nem se gasta a mensagem.
+            //
+            // A flag é marcada no EVENTO, não amostrada em `update` como a do
+            // ataque: um toque rápido começa e termina entre dois quadros, e
+            // comparar o estado quadro a quadro perdia o dash. Ela fica presa
+            // até `getDashState` consumir.
+            if (!this.dashOnCooldown && this.dashBtn.getBounds().contains(pointer.x, pointer.y)) {
+                this._dashJustPressed = true;
             }
         });
 
@@ -163,6 +367,24 @@ export default class InputManager {
 
         // Estado mantido: teclado OU touch pressionado
         this._attackHeld = spaceDown || this._touchAttackDown;
+
+        // Dash: só a borda de descida interessa, do teclado (SHIFT) ou do botão.
+        const shiftDown = this.dashKey.isDown;
+        if (shiftDown && !this._lastShiftDown && !this.dashOnCooldown) {
+            this._dashJustPressed = true;
+        }
+        this._lastShiftDown = shiftDown;
+
+    }
+
+    /**
+     * Consome o toque de dash do quadro. Como `getAttackState`, zera a borda —
+     * chame no máximo uma vez por quadro.
+     */
+    getDashState() {
+        const state = { justPressed: this._dashJustPressed };
+        this._dashJustPressed = false;
+        return state;
     }
 
     getAttackState() {

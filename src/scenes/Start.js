@@ -85,8 +85,13 @@ export class Start extends Phaser.Scene {
 
         const movement = this.inputs.getMovementVector();
         const attackState = this.inputs.getAttackState();
+        const dashState = this.inputs.getDashState();
 
-        if (!this.player._isDead) this.player.update(movement, attackState, delta);
+        if (!this.player._isDead) this.player.update(movement, attackState, dashState, delta);
+
+        // Recarga do botão de dash. Offline o cooldown mora no próprio
+        // personagem; online ele vem do servidor. O botão não sabe a diferença.
+        this.inputs.setDashCooldown(this.player.dashCooldownRatio());
 
         this.alliedPlayers.getChildren().forEach(ai => {
             if (ai !== this.player) ai.aiUpdate(time, delta);

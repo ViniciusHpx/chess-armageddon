@@ -14,6 +14,38 @@
  */
 export const ATTACK_MOVE_FACTOR = 0.6;
 
+/**
+ * Atraso entre iniciar o golpe e aplicar o dano. Espelha `ATTACK_WINDUP_MS` do
+ * servidor; offline era o `200` cravado dentro de `performAttack`.
+ */
+export const ATTACK_WINDUP_MS = 200;
+
+/**
+ * DASH / ESQUIVA — espelho de `chess-armageddon-server/src/sim/constants.ts`.
+ *
+ * A distância e a duração precisam bater com o servidor: é com elas que a
+ * previsão local move o boneco antes do `dashing` voltar no estado. Se
+ * divergirem, o cliente anda diferente do servidor e a reconciliação corrige
+ * na cara do jogador.
+ *
+ * O cooldown aqui é só o denominador do indicador circular do botão e o valor
+ * usado pelo modo offline; quem recusa um dash cedo demais é o servidor.
+ */
+export const DASH_DISTANCE = 220;
+export const DASH_DURATION_MS = 220;
+export const DASH_SPEED = DASH_DISTANCE / (DASH_DURATION_MS / 1000);
+/** Teto de segurança do dash; quem manda na distância é DASH_DISTANCE. */
+export const DASH_TIMEOUT_MS = DASH_DURATION_MS * 2;
+
+export const DASH_COOLDOWN_MS = 1500;
+export const DASH_INVULN_MS = 160;
+
+/** Só no offline: online quem cronometra o bot é o servidor. */
+export const BOT_DASH_COOLDOWN_MS = 3000;
+export const BOT_DODGE_CHANCE = 0.35;
+export const BOT_DODGE_REACTION_MS = 90;
+export const BOT_DODGE_RANGE_SLACK = 1.25;
+
 export const RANKS = {
     PAWN: {
         key: 'pawn',

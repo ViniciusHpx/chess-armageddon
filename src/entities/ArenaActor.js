@@ -1,4 +1,5 @@
 import { RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, skinKey } from '../constants/Hierarchy.js';
+import { playDashFx } from '../utils/DashFx.js';
 
 /**
  * Atraso de renderização dos personagens que não são o jogador local, em ms.
@@ -88,6 +89,13 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
          * @type {{x: number, y: number, t: number}[]}
          */
         this.snapshots = [{ x: actorState.x, y: actorState.y, t: performance.now() }];
+
+        /**
+         * Estado de dash do patch anterior. O efeito visual dispara na SUBIDA
+         * desta flag — uma vez por dash, e não a cada quadro em que ela está
+         * ligada. Ver `checkDashFx`.
+         */
+        this._wasDashing = false;
 
         this.applyRank();
     }
@@ -224,9 +232,39 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
 
         this.setPosition(this.renderX, this.renderY);
         this.setFlipX(s.flipX);
+        this.checkDashFx();
         this.setAlpha(s.invuln ? 0.55 : 1);
 
         this.commonUpdate();
+    }
+
+    /**
+     * Dispara o efeito de dash dos OUTROS personagens, na subida de
+     * `dashing`. A direção sai das duas últimas amostras — é o movimento que
+     * realmente aconteceu, e num dash ele domina qualquer outra coisa.
+     */
+    checkDashFx() {
+        const dashing = this.actorState.dashing;
+
+        if (dashing && !this._wasDashing) {
+            const buf = this.snapshots;
+            const a = buf[buf.length - 2];
+            const b = buf[buf.length - 1];
+            const dx = a && b ? b.x - a.x : (this.actorState.flipX ? -1 : 1);
+            const dy = a && b ? b.y - a.y : 0;
+            playDashFx(this.scene, this, dx, dy);
+        }
+
+        this._wasDashing = dashing;
+    }
+
+    /**
+     * O dono do ator dispara o efeito na hora do toque, sem esperar o patch.
+     * Isto marca o dash como já tratado para `checkDashFx` não repetir quando
+     * o `dashing` do servidor finalmente chegar.
+     */
+    markDashHandled() {
+        this._wasDashing = true;
     }
 
     // -----------------------------------------------------------------------

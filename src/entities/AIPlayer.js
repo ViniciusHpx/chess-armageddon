@@ -1,6 +1,7 @@
 import PlayerBase from './PlayerBase.js';
 import {
-    RANKS, attackHalfBand, attackReach, ATTACK_MOVE_FACTOR, DAMAGE_NORMAL, DAMAGE_CHARGED
+    RANKS, attackHalfBand, attackReach, ATTACK_MOVE_FACTOR, DAMAGE_NORMAL, DAMAGE_CHARGED,
+    ATTACK_WINDUP_MS, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
 } from '../constants/Hierarchy.js';
 
 /**
@@ -40,6 +41,12 @@ export default class AIPlayer extends PlayerBase {
         this.setRandomTimer();
 
         this._attackCooldown = 0;
+
+        /**
+         * Golpe inimigo para o qual este bot já sorteou reação, identificado
+         * pelo instante do impacto. Ver `tryDodge`.
+         */
+        this._dodgeRolledFor = 0;
     }
 
     setRandomTimer() {
@@ -47,6 +54,7 @@ export default class AIPlayer extends PlayerBase {
     }
 
     die() {
+        this.cancelDash();
         this.setActive(false);
         this.setVisible(false);
         this.body.enable = false;
@@ -81,6 +89,14 @@ export default class AIPlayer extends PlayerBase {
 
     aiUpdate(time, delta) {
         if (!this.active) return;
+
+        // Dash em curso: mantém o impulso e não decide mais nada neste quadro.
+        const dash = this.dashVelocity(delta);
+        if (dash) {
+            this.setVelocity(dash.vx, dash.vy);
+            this.commonUpdate(delta);
+            return;
+        }
 
         // Define o grupo de inimigos (adversários)
         const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
@@ -148,6 +164,11 @@ export default class AIPlayer extends PlayerBase {
             return;
         }
 
+        if (this.tryDodge(nearestEnemy)) {
+            this.commonUpdate(delta);
+            return;
+        }
+
         if (this._isCharging) {
             this.stepCharge(nearestEnemy, enemies);
         } else {
@@ -155,6 +176,46 @@ export default class AIPlayer extends PlayerBase {
         }
 
         this.commonUpdate(delta);
+    }
+
+    /**
+     * O bot esquiva do golpe que está vindo?
+     *
+     * Mesma regra do servidor (`World.tryBotDodge`): filtros baratos primeiro
+     * — cooldown, existe golpe inimigo em curso, o atacante está perto o
+     * bastante, o tempo de reação já passou — e só então UM sorteio por golpe,
+     * com a chave guardada em `_dodgeRolledFor`. Sorteando por quadro, a 60
+     * FPS os 200 ms de windup dariam 12 chances e o bot esquivaria de tudo.
+     *
+     * @param {?PlayerBase} threat Inimigo mais próximo.
+     */
+    tryDodge(threat) {
+        if (this.dashCooldownRatio(BOT_DASH_COOLDOWN_MS) > 0) return false;
+        if (!threat || !threat.active || !threat._isAttacking) return false;
+
+        const impactoEm = threat._attackHitAt || 0;
+        if (this._dodgeRolledFor === impactoEm) return false;
+
+        const now = this.scene.time.now;
+        const elapsed = ATTACK_WINDUP_MS - (impactoEm - now);
+        if (elapsed < BOT_DODGE_REACTION_MS) return false;
+
+        const from = threat.getEllipseCenter();
+        const to = this.getEllipseCenter();
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+
+        const mult = threat._isChargedAttack ? 2 : 1;
+        const perigo = (threat.collisionRx + attackReach(threat._currentRank) * mult
+            + this.collisionRx) * BOT_DODGE_RANGE_SLACK;
+        if (dx * dx + dy * dy > perigo * perigo) return false;
+
+        // Percebeu o golpe: gasta o sorteio deste ataque, acertando ou não.
+        this._dodgeRolledFor = impactoEm;
+        if (Math.random() >= BOT_DODGE_CHANCE) return false;
+
+        // Foge na direção oposta ao atacante — o mesmo vetor do empurrão.
+        return this.startDash(dx, dy, BOT_DASH_COOLDOWN_MS);
     }
 
     /** Escolhe entre não atacar, bater normal ou começar a carregar. */

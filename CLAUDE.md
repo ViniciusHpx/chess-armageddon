@@ -33,6 +33,7 @@ Para jogar online, suba o servidor antes: `cd ../chess-armageddon-server && npm 
 | `?name=Fulano` | nome exibido aos outros; **pula a tela de entrada** |
 | `?server=wss://...` | aponta para outro servidor sem editar arquivo |
 | tecla `H` | liga/desliga o desenho das hitboxes (só na `Arena`) |
+| tecla `SHIFT` | dash/esquiva (mesmo botão azul do HUD, nos dois modos) |
 | tecla `TAB` | mostra o placar de abates/mortes enquanto estiver pressionada (nos dois modos) |
 
 ### prompt_generator.ipynb
@@ -144,6 +145,77 @@ Sequência: `performAttack()` marca `_isAttacking`, e um `delayedCall(200)` apli
 
 A máquina de carga (`startCharging` / `updateCharge` / `releaseCharge` / `cancelCharge`) mora no `PlayerBase`, não no `HumanPlayer`: humano e bot usam exatamente a mesma, e o que muda entre eles é só **quem decide** apertar e soltar — a entrada do jogador de um lado, `AIPlayer.decideAttack`/`stepCharge` do outro.
 
+### Dash / esquiva
+
+Impulso curto na direção do movimento (parado, para o lado que a peça olha),
+com invulnerabilidade no começo e cooldown. Existe nos dois modos e vale
+também para os bots.
+
+| Constante | Valor | O que é |
+| --- | --- | --- |
+| `DASH_DISTANCE` | 220 px | distância percorrida, exata |
+| `DASH_DURATION_MS` | 220 ms | duração nominal (define `DASH_SPEED`) |
+| `DASH_TIMEOUT_MS` | 440 ms | teto de segurança, só para dash travado |
+| `DASH_COOLDOWN_MS` | 1500 ms | espera, contada do INÍCIO do dash |
+| `DASH_INVULN_MS` | 160 ms | janela de invulnerabilidade |
+| `BOT_DASH_COOLDOWN_MS` | 3000 ms | cooldown dos bots |
+| `BOT_DODGE_CHANCE` | 0,35 | chance por golpe percebido |
+| `BOT_DODGE_REACTION_MS` | 90 ms | atraso de reação dentro do windup |
+| `BOT_DODGE_RANGE_SLACK` | 1,25 | folga sobre o alcance do atacante |
+
+Os valores vivem em `constants.ts` (servidor) e são espelhados em
+[Hierarchy.js](src/constants/Hierarchy.js). **Distância e duração precisam bater
+nos dois lados** — é com elas que a previsão local anda antes de o `dashing`
+voltar no estado.
+
+**Não é teleporte nem empurrão:** o dash só substitui `vx`/`vy` enquanto dura,
+então colisão entre personagens e clamp do mapa continuam valendo sem nada
+novo.
+
+**A distância termina o dash, não o relógio.** `dashRemaining` (px) é decrementado
+a cada passo e a velocidade do último passo é limitada pelo que falta. Sem isso,
+o servidor (ticks de 50 ms) e o cliente (quadros de ~16 ms) paravam em pontos
+diferentes e sobrava um resto de ~20 px por dash para a reconciliação desfazer.
+`dashUntil` ficou como teto: solta quem travou contra outro personagem e nunca
+consumiria o resto.
+
+**Invulnerabilidade** reusa o `invulnUntil`/`_isInvulnerable` que já existiam, com
+`Math.max` — o dash nunca encurta uma invulnerabilidade de dano ou de respawn. No
+offline ela vive num campo próprio (`_dashInvulnUntil`) e `isInvulnerable()` soma
+os dois, porque o `_isInvulnerable` é ligado/desligado por `delayedCall` e um
+cancelaria o outro.
+
+**Autoridade no online.** O cliente manda `"d"` **sem corpo**: direção, distância,
+duração e cooldown saem todos do `World.requestDash`, que recusa se o ator estiver
+morto, congelado, atacando ou em recarga. Spam cai nesse `return` (e, em rajada,
+no `maxMessagesPerSecond` da sala). O botão desenha `ActorState.dashCd`, ou seja, o
+cooldown do próprio servidor — não há contador local para adulterar.
+
+O pacote de entrada é enviado **antes** do `"d"`, porque a direção sai da última
+entrada recebida: sem isso os dois lados poderiam dashar para lados diferentes.
+
+**A reconciliação fica suspensa durante o dash** (`emDash` em
+[Arena.js](src/scenes/Arena.js)). O `ack` significa "apliquei sua entrada até
+aqui", não "terminei seu dash": o servidor confirma a sequência no primeiro tick e
+só então gasta 220 ms empurrando o personagem, então corrigir contra ele nesse
+intervalo puxava a previsão para trás e o dash rendia menos de um terço na tela.
+O salto por `SNAP_DISTANCE` continua ativo, para respawn no meio do dash não
+deixar a previsão presa.
+
+**Esquiva dos bots.** `World.tryBotDodge` (online) e `AIPlayer.tryDodge` (offline)
+usam a mesma regra: filtros baratos primeiro (cooldown → existe golpe inimigo em
+curso → atacante dentro do alcance de perigo → tempo de reação cumprido) e então
+**um** sorteio por golpe, com a chave `attackHitAt` do atacante guardada em
+`dodgeRolledFor`. Sorteando a cada tick, os 200 ms de windup dariam ~4 chances
+(12 a 60 FPS) e o bot esquivaria de tudo. Bot no meio do próprio golpe não
+esquiva — a mesma restrição vale para o jogador.
+
+**Feedback visual** em [DashFx.js](src/utils/DashFx.js), compartilhado pelas duas
+hierarquias de personagem: squash/stretch no eixo do movimento e três fantasmas
+que somem. É disparado por evento — na subida de `dashing` para os outros
+jogadores (`ArenaActor.checkDashFx`) e no toque para o dono do ator, que não
+espera o patch.
+
 ### Aura
 
 Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o visual: `AURA_THRESHOLDS` define a cor do emissor de partículas e a frequência escala até `maxAuraForFreq = 210`. A textura `aura-particle` é gerada por canvas em runtime — existe código duplicado que a cria tanto em `Start.create()` quanto em `PlayerBase._createAuraEmitter()`.
@@ -178,6 +250,7 @@ cliente manda entrada e desenha o estado que volta.
 | [src/scenes/Arena.js](src/scenes/Arena.js) | conecta, cria/destrói atores, envia entrada, prevê o próprio movimento |
 | [src/entities/ArenaActor.js](src/entities/ArenaActor.js) | **só desenho**: sprite, barra de vida, hitbox, aura, brilho de carga, forma do golpe |
 | [src/net/netconfig.js](src/net/netconfig.js) | endpoint do servidor e nome do jogador |
+| [src/utils/DashFx.js](src/utils/DashFx.js) | efeito visual do dash, usado pelos dois modos |
 | [src/ui/NameGate.js](src/ui/NameGate.js) | tela de entrada do nome (HTML, roda antes do Phaser) |
 
 Reaproveitados sem alteração dos dois modos: `InputManager`, `DeathScreen`,

@@ -2,7 +2,11 @@ import ArenaActor from '../entities/ArenaActor.js';
 import InputManager from '../utils/InputManager.js';
 import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
-import { ATTACK_MOVE_FACTOR, RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT } from '../constants/Hierarchy.js';
+import {
+    ATTACK_MOVE_FACTOR, DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
+    RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT
+} from '../constants/Hierarchy.js';
+import { playDashFx } from '../utils/DashFx.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName } from '../net/netconfig.js';
 
 /**
@@ -125,6 +129,18 @@ export class Arena extends Phaser.Scene {
         // Ver `stepPrediction`: a previsão para de andar já no envio.
         this.localAttackPending = false;
         this.localAttackSentAt = 0;
+
+        // Dash previsto localmente. O servidor continua sendo quem decide se
+        // ele acontece — isto só evita esperar um RTT para o boneco sair do
+        // lugar, que é justamente o tempo em que a esquiva serviria para algo.
+        this.localDashUntil = 0;
+        this.localDashDirX = 0;
+        this.localDashDirY = 0;
+        /** Distância que falta no dash previsto — mesma conta do servidor. */
+        this.localDashRemaining = 0;
+        // Cooldown otimista, só para o botão apagar na hora do toque. O valor
+        // do servidor (`dashCd`) manda assim que chega.
+        this.localDashReadyAt = 0;
 
         this.showHitboxes = false;
 
@@ -326,6 +342,8 @@ export class Arena extends Phaser.Scene {
             actor.sync(now, predicted);
         }
 
+        this.inputs.setDashCooldown(this.dashCooldownRatio(localState));
+
         this.followLocalActor();
         this.scoreboard.update(time);
     }
@@ -393,6 +411,9 @@ export class Arena extends Phaser.Scene {
             this.room.send('a', 1);
         }
 
+        const dash = this.inputs.getDashState();
+        if (dash.justPressed) this.tryDash(localState, dx, dy, now);
+
         if (attack.justReleased) {
             if (this.localCharging && localState.alive) {
                 this.localAttackPending = true;
@@ -401,6 +422,62 @@ export class Arena extends Phaser.Scene {
             this.localCharging = false;
             this.room.send('a', 0);
         }
+    }
+
+    /**
+     * Pede um dash ao servidor e já começa a prever o movimento.
+     *
+     * As condições testadas aqui são as MESMAS do `World.requestDash`, lidas do
+     * estado que o servidor mandou (`dashCd`, `attacking`, `alive`). Prever um
+     * dash que o servidor vai recusar criaria ~220 px de divergência para a
+     * reconciliação desfazer na cara do jogador.
+     *
+     * O pacote de entrada é enviado ANTES do pedido: a direção do dash sai da
+     * última entrada que o servidor recebeu, então os dois lados precisam estar
+     * falando do mesmo vetor. Como o transporte preserva a ordem, o `i` chega
+     * primeiro.
+     */
+    tryDash(localState, dx, dy, now) {
+        if (!localState.alive || localState.attacking || this.localAttackPending) return;
+        if (localState.dashCd > 0 || this.time.now < this.localDashReadyAt) return;
+
+
+        this.sendInputPacket(dx, dy, now);
+        this.room.send('d');
+
+        let dirX = dx;
+        let dirY = dy;
+        if (dirX === 0 && dirY === 0) {
+            // Parado: sai para o lado que a peça está olhando (mesma regra do
+            // servidor, que só conhece o `flipX`).
+            dirX = localState.flipX ? -1 : 1;
+            dirY = 0;
+        }
+        const length = Math.hypot(dirX, dirY) || 1;
+
+        this.localDashDirX = dirX / length;
+        this.localDashDirY = dirY / length;
+        this.localDashUntil = this.time.now + DASH_TIMEOUT_MS;
+        this.localDashRemaining = DASH_DISTANCE;
+        this.localDashReadyAt = this.time.now + DASH_COOLDOWN_MS;
+
+        const actor = this.actors.get(this.room.sessionId);
+        if (actor) {
+            actor.markDashHandled();
+            playDashFx(this, actor, this.localDashDirX, this.localDashDirY);
+        }
+    }
+
+    /** Fração do cooldown do dash que falta, 0..1, para o botão desenhar. */
+    dashCooldownRatio(localState) {
+        // O campo só chega depois que muda pela primeira vez: com reflection do
+        // schema, valor igual ao padrão nunca vira patch e fica `undefined` aqui.
+        const bruto = localState ? localState.dashCd : 0;
+        const doServidor = Number.isFinite(bruto) ? bruto / 100 : 0;
+        const local = Math.max(0, this.localDashReadyAt - this.time.now) / DASH_COOLDOWN_MS;
+        // O maior dos dois: o local cobre o RTT entre o toque e o primeiro
+        // patch com o cooldown já contado, e o do servidor manda no resto.
+        return Math.min(1, Math.max(doServidor, local));
     }
 
     /** Progresso da carga medido no cliente, só para o brilho não atrasar. */
@@ -442,6 +519,8 @@ export class Arena extends Phaser.Scene {
         this.segDx = 0;
         this.segDy = 0;
         this.localAttackPending = false;
+        this.localDashUntil = 0;
+        this.localDashRemaining = 0;
     }
 
     /**
@@ -491,16 +570,31 @@ export class Arena extends Phaser.Scene {
             this.localAttackPending = false;
         }
 
-        // Golpe em curso: anda devagar, não para. O fator é o mesmo do
-        // servidor; a previsão o aplica desde o ENVIO do ataque, e não desde a
-        // confirmação, senão o RTT vira divergência e a reconciliação puxa o
-        // boneco para trás.
-        const atacando = localState.attacking || this.localAttackPending;
-        const fator = atacando ? ATTACK_MOVE_FACTOR : 1;
-        const { dx, dy } = this.inputs.getMovementVector();
-        const speed = RANKS[RANK_ORDER[localState.rank]].speed * fator;
-        this.predX += dx * speed * dt;
-        this.predY += dy * speed * dt;
+        const dashLocal = this.time.now < this.localDashUntil && this.localDashRemaining > 0;
+        const emDash = dashLocal || localState.dashing;
+
+        if (dashLocal) {
+            // Dash manda na previsão enquanto dura, como no `stepPlayer` do
+            // servidor. A velocidade é limitada pelo que falta percorrer (a
+            // mesma conta de `Actor.consumeDashSpeed`), senão o último passo
+            // passaria do alvo: o servidor integra em ticks de 50 ms e o
+            // cliente em quadros, e a diferença virava resto para reconciliar.
+            const speed = Math.min(DASH_SPEED, this.localDashRemaining / dt);
+            this.localDashRemaining -= speed * dt;
+            this.predX += this.localDashDirX * speed * dt;
+            this.predY += this.localDashDirY * speed * dt;
+        } else {
+            // Golpe em curso: anda devagar, não para. O fator é o mesmo do
+            // servidor; a previsão o aplica desde o ENVIO do ataque, e não desde
+            // a confirmação, senão o RTT vira divergência e a reconciliação puxa
+            // o boneco para trás.
+            const atacando = localState.attacking || this.localAttackPending;
+            const fator = atacando ? ATTACK_MOVE_FACTOR : 1;
+            const { dx, dy } = this.inputs.getMovementVector();
+            const speed = RANKS[RANK_ORDER[localState.rank]].speed * fator;
+            this.predX += dx * speed * dt;
+            this.predY += dy * speed * dt;
+        }
 
         this.predX = Phaser.Math.Clamp(this.predX, halfW, WORLD_WIDTH - halfW);
         this.predY = Phaser.Math.Clamp(this.predY, halfH, WORLD_HEIGHT - halfH);
@@ -539,6 +633,22 @@ export class Arena extends Phaser.Scene {
             this.resetPrediction(localState);
             return;
         }
+
+        // Durante o dash a reconciliação fica suspensa.
+        //
+        // O `ack` significa "já apliquei sua entrada até aqui", não "já terminei
+        // seu dash": o servidor confirma a sequência no primeiro tick e só então
+        // gasta 220 ms empurrando o personagem. Nesse meio-tempo o alvo é a
+        // posição de quem ainda não dashou, e corrigir contra ela puxava a
+        // previsão para trás justamente enquanto o impulso acontecia — o dash
+        // rendia menos de um terço da distância na tela.
+        //
+        // Os dois lados percorrem a MESMA distância na mesma duração, então
+        // basta esperar: quando o dash acaba dos dois lados, o resto é a
+        // defasagem normal de rede e a reconciliação fecha em poucos quadros.
+        // O salto acima (SNAP_DISTANCE) continua valendo, para respawn no meio
+        // do dash não deixar a previsão presa longe.
+        if (emDash) return;
 
         const t = Math.min(1, RECONCILE_RATE * dt);
         this.predX += errorX * t;

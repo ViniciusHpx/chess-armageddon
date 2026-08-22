@@ -66,6 +66,7 @@ export default class HumanPlayer extends PlayerBase {
         this.updateHealthBar();
 
         this._isDead = false;
+        this.cancelDash();
 
         this._isInvulnerable = true;
         this.scene.time.delayedCall(1000, () => {
@@ -73,9 +74,15 @@ export default class HumanPlayer extends PlayerBase {
         });
     }
 
-    update(movement, attackState, deltaMs) {
+    update(movement, attackState, dashState, deltaMs) {
         // Morto: ignora entrada até renascer
         if (this._isDead) return;
+
+        // Entrada de dash. Antes do ataque de propósito: pedir dash com o
+        // golpe já em curso é recusado dentro de `startDash`.
+        if (dashState && dashState.justPressed) {
+            this.startDash(movement.dx, movement.dy);
+        }
 
         // Entrada de ataque
         if (attackState.justPressed) {
@@ -92,12 +99,20 @@ export default class HumanPlayer extends PlayerBase {
         // Movimentação: durante o golpe anda devagar em vez de deslizar solto
         // com a velocidade anterior (ver ATTACK_MOVE_FACTOR).
         const { dx, dy } = movement;
-        const speed = this._currentRank.speed *
-            (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
 
-        this.setVelocity(dx * speed, dy * speed);
+        // Dash manda na velocidade enquanto dura; a entrada não desvia nem
+        // freia o impulso.
+        const dash = this.dashVelocity(deltaMs);
+        if (dash) {
+            this.setVelocity(dash.vx, dash.vy);
+        } else {
+            const speed = this._currentRank.speed *
+                (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
 
-        if (dx !== 0) this.setFlipX(dx < 0);
+            this.setVelocity(dx * speed, dy * speed);
+
+            if (dx !== 0) this.setFlipX(dx < 0);
+        }
 
         if (!this._isAttacking) {
             this.handleVisualEffects(dx, dy);

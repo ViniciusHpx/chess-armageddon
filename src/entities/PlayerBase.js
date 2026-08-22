@@ -1,8 +1,11 @@
 import {
+    ATTACK_WINDUP_MS,
+    DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
     DAMAGE_NORMAL, DAMAGE_CHARGED,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
 } from '../constants/Hierarchy.js';
+import { playDashFx } from '../utils/DashFx.js';
 
 export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y, textureKey, team, debugColor) {
@@ -56,6 +59,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         // Flag para ataque carregado
         this._isChargedAttack = false;
+        /** Instante do impacto do golpe em curso (0 = nenhum). */
+        this._attackHitAt = 0;
 
         // Máquina de carga do ataque, compartilhada por humano e bot.
         this._isCharging = false;
@@ -72,6 +77,18 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         // o alvo ataca ou anda contra o golpe.
         this._knockbackVx = 0;
         this._knockbackVy = 0;
+
+        // Dash / esquiva. Os instantes são do relógio da cena (`scene.time.now`),
+        // como o resto dos temporizadores do modo offline.
+        this._dashUntil = 0;
+        this._dashReadyAt = 0;
+        /** Distância que falta percorrer no dash, em px. */
+        this._dashRemaining = 0;
+        this._dashDirX = 0;
+        this._dashDirY = 0;
+        /** Invulnerabilidade do dash. Separada de `_isInvulnerable` para os
+         *  `delayedCall` do dano e do respawn não cortarem uma a outra. */
+        this._dashInvulnUntil = 0;
 
         // Inicializa o emissor de partículas da aura (se ainda não existir a textura)
         this._createAuraEmitter();
@@ -267,8 +284,101 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    /**
+     * Dá o impulso do dash, se a habilidade estiver pronta.
+     *
+     * Só define direção e prazos: quem move é `dashVelocity()`, chamada pelo
+     * update da entidade. Assim o dash passa pelo mesmo caminho de sempre —
+     * `setVelocity` → física → `CollisionResolver` → `clampToWorldBounds` — e
+     * não atravessa ninguém nem sai do mapa.
+     *
+     * @param {number} dirX Direção desejada (não precisa ser unitária).
+     * @param {number} dirY
+     * @param {number} [cooldownMs] Cooldown próprio (bots usam um maior).
+     * @returns {boolean} true se o dash começou.
+     */
+    startDash(dirX, dirY, cooldownMs = DASH_COOLDOWN_MS) {
+        const now = this.scene.time.now;
+        if (!this.active || now < this._dashReadyAt) return false;
+        // Durante o golpe não: o dash arrastaria a hitbox do ataque para cima
+        // do alvo depois do windup já ter começado.
+        if (this._isAttacking) return false;
+
+        let dx = dirX;
+        let dy = dirY;
+        if (dx === 0 && dy === 0) {
+            dx = this.flipX ? -1 : 1;
+            dy = 0;
+        }
+        const length = Math.hypot(dx, dy) || 1;
+
+        this._dashDirX = dx / length;
+        this._dashDirY = dy / length;
+        this._dashUntil = now + DASH_TIMEOUT_MS;
+        this._dashRemaining = DASH_DISTANCE;
+        // O cooldown conta do INÍCIO: mexer na duração não muda a cadência.
+        this._dashReadyAt = now + cooldownMs;
+        this._dashInvulnUntil = now + DASH_INVULN_MS;
+
+        // Carga em curso é cancelada: sair rolando com o golpe engatilhado
+        // deixaria o alcance carregado de graça depois da esquiva.
+        if (this._isCharging) this.cancelCharge();
+
+        if (dx !== 0) this.setFlipX(dx < 0);
+
+        playDashFx(this.scene, this, this._dashDirX, this._dashDirY);
+        return true;
+    }
+
+    /**
+     * Velocidade do dash neste quadro, ou `null` se não estiver em dash.
+     *
+     * A velocidade é limitada pelo que falta percorrer, então a distância total
+     * é exatamente `DASH_DISTANCE` seja qual for a taxa de quadros — o último
+     * quadro sai mais devagar em vez de passar do alvo.
+     *
+     * @param {number} deltaMs Delta do quadro, vindo do update da entidade.
+     */
+    dashVelocity(deltaMs) {
+        if (!this.isDashing) return null;
+
+        const dt = (deltaMs > 0 ? deltaMs : this.scene.game.loop.delta) / 1000;
+        if (!(dt > 0)) return { vx: 0, vy: 0 };
+
+        const speed = Math.min(DASH_SPEED, this._dashRemaining / dt);
+        this._dashRemaining -= speed * dt;
+        return { vx: this._dashDirX * speed, vy: this._dashDirY * speed };
+    }
+
+    get isDashing() {
+        return this.scene.time.now < this._dashUntil && this._dashRemaining > 0;
+    }
+
+    /** Fração do cooldown do dash que ainda falta, 0..1 (0 = pronto). */
+    dashCooldownRatio(cooldownMs = DASH_COOLDOWN_MS) {
+        const falta = this._dashReadyAt - this.scene.time.now;
+        if (falta <= 0) return 0;
+        return Math.min(1, falta / cooldownMs);
+    }
+
+    /** Corta um dash em curso (morte, respawn). Não mexe no cooldown. */
+    cancelDash() {
+        this._dashUntil = 0;
+        this._dashRemaining = 0;
+        this._dashDirX = 0;
+        this._dashDirY = 0;
+    }
+
+    /**
+     * Invulnerável por qualquer motivo: dano recente/respawn
+     * (`_isInvulnerable`) ou a janela do dash.
+     */
+    isInvulnerable() {
+        return this._isInvulnerable || this.scene.time.now < this._dashInvulnUntil;
+    }
+
     takeDamage(amount) {
-        if (this._isInvulnerable) return false;
+        if (this.isInvulnerable()) return false;
 
         this.currentHealth -= amount;
         this.updateHealthBar();
@@ -449,8 +559,11 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._isAttacking = true;
         this._attackHitEnemies.clear();
         this._attackEnemyGroup = enemyGroup;
+        // Quando este golpe vai acertar. Serve de chave para a esquiva dos bots
+        // (`AIPlayer.tryDodge`), que precisa saber se ainda dá tempo de reagir.
+        this._attackHitAt = this.scene.time.now + ATTACK_WINDUP_MS;
 
-        this.scene.time.delayedCall(200, () => {
+        this.scene.time.delayedCall(ATTACK_WINDUP_MS, () => {
             // Pode ter morrido/sido desativado durante o delay
             if (this.active) this.executeAttackHit(enemyGroup);
             this.finishAttack();
@@ -757,7 +870,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         // Golpe que não conecta não empurra. Sem esta guarda, quem acabou de
         // renascer (ou de levar dano) seria arrastado pelo mapa sem perder
         // vida — `takeDamage` recusa o dano, mas o empurrão passaria.
-        if (enemy._isInvulnerable) return;
+        if (enemy.isInvulnerable()) return;
 
         const killed = enemy.takeDamage(damage);
 
