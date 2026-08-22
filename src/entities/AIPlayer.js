@@ -134,8 +134,8 @@ export default class AIPlayer extends PlayerBase {
             moveAngle = -Math.PI / 2; // força ir para cima
         }
 
-        // Aplica velocidade reduzida (25% do speed do rank, conforme original)
-        const speed = this._currentRank.speed * 0.25;
+        // Velocidade cheia do rank, igual ao jogador (espelha BOT_SPEED_FACTOR = 1)
+        const speed = this._currentRank.speed;
         const vx = Math.cos(moveAngle) * speed;
         const vy = Math.sin(moveAngle) * speed;
         this.setVelocity(vx, vy);
