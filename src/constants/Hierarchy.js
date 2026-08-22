@@ -348,7 +348,3 @@ export function knockbackSpeed(power, targetMass) {
     const fator = scaleByCharge(power, 1, KNOCKBACK_CHARGED_FACTOR, KNOCKBACK_CHARGE_EXP);
     return (KNOCKBACK_SPEED * fator) / Math.sqrt(Math.max(targetMass, 0.01));
 }
-
-/** Dimensões do mapa. Espelha WORLD_WIDTH/WORLD_HEIGHT do servidor. */
-export const WORLD_WIDTH = 3548;
-export const WORLD_HEIGHT = 1774;

@@ -935,4 +935,59 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._attackEnemyGroup = null;
         this._chargePower = 0;
     }
+
+    // No final da classe PlayerBase...
+
+    /** Verifica o centro e as bordas da elipse para o personagem não atravessar paredes */
+    isPositionWalkable(mapCollider) {
+        if (!mapCollider) return true;
+
+        const center = this.getEllipseCenter();
+        const rx = this.collisionRx * 0.7; // Margem menor que 100% para perdoar resvalos
+        const ry = this.collisionRy * 0.7;
+
+        return mapCollider.isWalkable(center.x, center.y) &&
+               mapCollider.isWalkable(center.x + rx, center.y) &&
+               mapCollider.isWalkable(center.x - rx, center.y) &&
+               mapCollider.isWalkable(center.x, center.y + ry) &&
+               mapCollider.isWalkable(center.x, center.y - ry);
+    }
+
+    /** 
+     * Substitua seu método "clampToWorldBounds" atual por este aqui.
+     */
+    constrainPosition(mapCollider) {
+        const bounds = this.scene.physics.world.bounds;
+        const halfW = this.displayWidth / 2;
+        const halfH = this.displayHeight / 2;
+
+        let newX = Phaser.Math.Clamp(this.x, bounds.x + halfW, bounds.right - halfW);
+        let newY = Phaser.Math.Clamp(this.y, bounds.y + halfH, bounds.bottom - halfH);
+        this.setPosition(newX, newY);
+
+        // Deslizamento (Sliding) contra pixels pretos
+        if (mapCollider && this._prevX !== undefined && this._prevY !== undefined) {
+            if (!this.isPositionWalkable(mapCollider)) {
+                
+                // Bateu. Tenta deslizar mantendo só o eixo X
+                this.setPosition(newX, this._prevY);
+                if (!this.isPositionWalkable(mapCollider)) {
+                    
+                    // Não deu. Tenta deslizar mantendo só o eixo Y
+                    this.setPosition(this._prevX, newY);
+                    if (!this.isPositionWalkable(mapCollider)) {
+                        
+                        // Quina absoluta, volta para onde estava no frame passado
+                        this.setPosition(this._prevX, this._prevY);
+                    }
+                }
+            }
+        }
+
+        this.body.updateFromGameObject(); // Atualiza a hitbox Arcade
+
+        // Guarda histórico para o deslize do próximo frame
+        this._prevX = this.x;
+        this._prevY = this.y;
+    }
 }

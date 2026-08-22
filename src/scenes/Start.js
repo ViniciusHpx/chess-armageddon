@@ -5,11 +5,13 @@ import CollisionResolver from '../utils/CollisionResolver.js';
 import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
+import MapCollider from '../utils/MapCollider.js'; // Importação
+import { COLLISION_PATH, ARENA_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 
 export class Start extends Phaser.Scene {
     preload() {
-        this.load.image('grass', 'assets/map_3548_1774.png');
-        this.load.image('collision_map', 'assets/map_collision_3548_1774.png');
+        this.load.image('grass', ARENA_PATH);
+        this.load.image('collision_map', COLLISION_PATH);
 
         this.load.spritesheet('pawn', 'assets/pawn_128.png', { frameWidth: 128, frameHeight: 128 });
         this.load.spritesheet('tower', 'assets/tower_160.png', { frameWidth: 160, frameHeight: 160 });
@@ -36,11 +38,15 @@ export class Start extends Phaser.Scene {
             canvas.refresh();
         }
 
-        const mapWidth = 3548;
-        const mapHeight = 1774;
+        const mapWidth = WORLD_WIDTH;
+        const mapHeight = WORLD_HEIGHT;
 
         this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
-        this.grass = this.add.tileSprite(0, 0, mapWidth, mapHeight, 'grass').setOrigin(0);
+
+        this.mapCollider = new MapCollider(this, 'collision_map');
+
+        this.add.image(0, 0, 'grass').setOrigin(0, 0); // Metade esquerda original
+        this.add.image(HALF_WORLD_WIDTH, 0, 'grass').setOrigin(0, 0).setFlipX(true);
 
         // Grupos de times
         this.alliedPlayers = this.physics.add.group();
@@ -73,12 +79,11 @@ export class Start extends Phaser.Scene {
         this.collisionResolver = new CollisionResolver(this, [this.alliedPlayers, this.enemyPlayers]);
 
         this.events.on('postupdate', () => {
-            // Ordem importa: separa os personagens e só depois prende ao mapa,
-            // para que o clamp continue sendo a última palavra sobre a posição.
             this.collisionResolver.update();
 
-            this.alliedPlayers.getChildren().forEach(p => p.clampToWorldBounds());
-            this.enemyPlayers.getChildren().forEach(p => p.clampToWorldBounds());
+            // Troque clampToWorldBounds por constrainPosition
+            this.alliedPlayers.getChildren().forEach(p => p.constrainPosition(this.mapCollider));
+            this.enemyPlayers.getChildren().forEach(p => p.constrainPosition(this.mapCollider));
         });
     }
 

@@ -10,6 +10,7 @@ import {
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice } from '../net/netconfig.js';
+import { ARENA_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 
 /**
  * Cena multiplayer. Toda a regra do jogo mora em `chess-armageddon-server`;
@@ -77,7 +78,7 @@ export class Arena extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image('grass', 'assets/map_3548_1774.png');
+        this.load.image('grass', ARENA_PATH);
 
         this.load.spritesheet('pawn', 'assets/pawn_128.png', { frameWidth: 128, frameHeight: 128 });
         this.load.spritesheet('tower', 'assets/tower_160.png', { frameWidth: 160, frameHeight: 160 });
@@ -96,7 +97,9 @@ export class Arena extends Phaser.Scene {
     create() {
         this.createAuraTexture();
 
-        this.add.tileSprite(0, 0, WORLD_WIDTH, WORLD_HEIGHT, 'grass').setOrigin(0);
+        this.add.image(0, 0, 'grass').setOrigin(0, 0);
+        this.add.image(HALF_WORLD_WIDTH, 0, 'grass').setOrigin(0, 0).setFlipX(true);
+
         this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
         this.cameras.main.centerOn(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
 

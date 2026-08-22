@@ -141,12 +141,50 @@ export default class AIPlayer extends PlayerBase {
         } else if (this.y > bounds.height - margin && Math.sin(moveAngle) > 0) {
             moveAngle = -Math.PI / 2; // força ir para cima
         }
+  
+        // --- NOVO: STEERING BEHAVIOR (DESVIO DE PAREDES) ---
+        if (this.scene.mapCollider) {
+            const center = this.getEllipseCenter();
+            const lookAhead = 150; // Quão longe o bot "enxerga"
+            const clearance = this.scene.mapCollider.getClearance(center.x, center.y, moveAngle, lookAhead);
+
+            // Parede detectada na rota principal!
+            if (clearance < lookAhead) {
+                // Testa as vistas em leque: 45º, -45º, 90º, -90º, 135º, -135º
+                const offsets = [Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2, Math.PI*0.75, -Math.PI*0.75];
+                let bestAngle = moveAngle;
+                let bestClearance = clearance;
+
+                for (const offset of offsets) {
+                    const testAngle = moveAngle + offset;
+                    const testClearance = this.scene.mapCollider.getClearance(center.x, center.y, testAngle, lookAhead);
+
+                    // +20 evita tremedeiras (ele só desvia se for muito vantajoso)
+                    if (testClearance > bestClearance + 20) {
+                        bestClearance = testClearance;
+                        bestAngle = testAngle;
+                        if (testClearance >= lookAhead) break; // Achou caminho 100% livre
+                    }
+                }
+
+                moveAngle = bestAngle; // Assume a rota desviada
+
+                // Se estivesse vagando, ajusta a variável interna para não ficar insistindo em bater
+                if (!nearestEnemy) {
+                    this.wanderAngle = moveAngle;
+                }
+            }
+        }
+
+        // --- FIM DO NOVO BLOCO ---
+
 
         // Velocidade cheia do rank, igual ao jogador (espelha BOT_SPEED_FACTOR = 1).
         // Durante o golpe, reduzida: antes o bot mantinha a velocidade do
         // quadro anterior e deslizava solto pelos 200 ms do windup.
         const speed = this._currentRank.speed *
             (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
+          
         const vx = Math.cos(moveAngle) * speed;
         const vy = Math.sin(moveAngle) * speed;
         this.setVelocity(vx, vy);
