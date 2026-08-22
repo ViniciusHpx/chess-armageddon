@@ -5,6 +5,15 @@
  * modo offline (cena `Start`). Se um número mudar lá, espelhe aqui — senão o
  * golpe acerta fora do que aparece na tela.
  */
+/**
+ * Fração da velocidade mantida durante o golpe (espelha
+ * `ATTACK_MOVE_FACTOR` do servidor).
+ *
+ * Parar seco durante o windup, somado ao RTT, dava a sensação de travar bem
+ * mais que os 200 ms reais do golpe.
+ */
+export const ATTACK_MOVE_FACTOR = 0.6;
+
 export const RANKS = {
     PAWN: {
         key: 'pawn',

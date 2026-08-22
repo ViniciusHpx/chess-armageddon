@@ -292,8 +292,24 @@ lado. Esquecer os últimos não quebra o golpe — só faz o bot mirar errado.
 
 ### Diferenças de comportamento em relação ao offline
 
-Quatro, todas decididas no servidor e comentadas lá: o personagem fica parado
-durante o golpe (offline ele deslizava 200 ms), o lado do L do cavalo é
+Três, todas decididas no servidor e comentadas lá: o lado do L do cavalo é
 congelado no início do golpe, cada um renasce no lado do próprio time e o alvo
 sai do time real (offline o `HumanPlayer` batia em `scene.enemyPlayers` mesmo
 tendo `team = 'human'`).
+
+### Movimento durante o golpe
+
+Nos dois modos, quem ataca continua andando a `ATTACK_MOVE_FACTOR` (0,6) da
+velocidade do rank pelos `ATTACK_WINDUP_MS`. Antes o servidor zerava a
+velocidade e o offline deslizava solto com a velocidade do quadro anterior.
+
+Parar seco no online ficava pior do que os 200 ms sugerem: o cliente só volta a
+andar quando o `attacking` cai no estado, então a parada real é
+`RTT + 200 ms + tick`.
+
+A previsão local aplica o fator a partir do **envio** do ataque
+(`localAttackPending` em [Arena.js](src/scenes/Arena.js)), não da confirmação.
+Aplicá-lo só na confirmação deixava o cliente andando rápido durante o RTT em
+que o servidor já tinha desacelerado; a reconciliação desfazia esse trecho e o
+boneco dava um passo para trás a cada golpe. Como o fator do cliente entra antes
+do servidor e sai antes também, o resto é pequeno e no sentido do movimento.

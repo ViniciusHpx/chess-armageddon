@@ -2,7 +2,7 @@ import ArenaActor from '../entities/ArenaActor.js';
 import InputManager from '../utils/InputManager.js';
 import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
-import { RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT } from '../constants/Hierarchy.js';
+import { ATTACK_MOVE_FACTOR, RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT } from '../constants/Hierarchy.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName } from '../net/netconfig.js';
 
 /**
@@ -491,12 +491,16 @@ export class Arena extends Phaser.Scene {
             this.localAttackPending = false;
         }
 
-        if (!localState.attacking && !this.localAttackPending) {
-            const { dx, dy } = this.inputs.getMovementVector();
-            const speed = RANKS[RANK_ORDER[localState.rank]].speed;
-            this.predX += dx * speed * dt;
-            this.predY += dy * speed * dt;
-        }
+        // Golpe em curso: anda devagar, não para. O fator é o mesmo do
+        // servidor; a previsão o aplica desde o ENVIO do ataque, e não desde a
+        // confirmação, senão o RTT vira divergência e a reconciliação puxa o
+        // boneco para trás.
+        const atacando = localState.attacking || this.localAttackPending;
+        const fator = atacando ? ATTACK_MOVE_FACTOR : 1;
+        const { dx, dy } = this.inputs.getMovementVector();
+        const speed = RANKS[RANK_ORDER[localState.rank]].speed * fator;
+        this.predX += dx * speed * dt;
+        this.predY += dy * speed * dt;
 
         this.predX = Phaser.Math.Clamp(this.predX, halfW, WORLD_WIDTH - halfW);
         this.predY = Phaser.Math.Clamp(this.predY, halfH, WORLD_HEIGHT - halfH);

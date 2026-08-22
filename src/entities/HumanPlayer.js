@@ -1,5 +1,5 @@
 import PlayerBase from './PlayerBase.js';
-import { RANKS } from '../constants/Hierarchy.js';
+import { ATTACK_MOVE_FACTOR, RANKS } from '../constants/Hierarchy.js';
 
 export default class HumanPlayer extends PlayerBase {
     constructor(scene, x, y) {
@@ -89,21 +89,21 @@ export default class HumanPlayer extends PlayerBase {
             this.updateCharge();
         }
 
-        // Movimentação (bloqueada durante ataque ou carga)
+        // Movimentação: durante o golpe anda devagar em vez de deslizar solto
+        // com a velocidade anterior (ver ATTACK_MOVE_FACTOR).
+        const { dx, dy } = movement;
+        const speed = this._currentRank.speed *
+            (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
+
+        this.setVelocity(dx * speed, dy * speed);
+
+        if (dx !== 0) this.setFlipX(dx < 0);
+
         if (!this._isAttacking) {
-            const { dx, dy } = movement;
-            const speed = this._currentRank.speed;
-
-            this.setVelocity(dx * speed, dy * speed);
-
-            if (dx !== 0) this.setFlipX(dx < 0);
-
             this.handleVisualEffects(dx, dy);
-        } else {
-            if (this.wasWalking) {
-                this.stopWalkEffect();
-                this.wasWalking = false;
-            }
+        } else if (this.wasWalking) {
+            this.stopWalkEffect();
+            this.wasWalking = false;
         }
 
         this.commonUpdate(deltaMs);

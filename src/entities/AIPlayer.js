@@ -1,6 +1,6 @@
 import PlayerBase from './PlayerBase.js';
 import {
-    RANKS, attackHalfBand, attackReach, DAMAGE_NORMAL, DAMAGE_CHARGED
+    RANKS, attackHalfBand, attackReach, ATTACK_MOVE_FACTOR, DAMAGE_NORMAL, DAMAGE_CHARGED
 } from '../constants/Hierarchy.js';
 
 /**
@@ -82,12 +82,6 @@ export default class AIPlayer extends PlayerBase {
     aiUpdate(time, delta) {
         if (!this.active) return;
 
-        // Durante o ataque, apenas mantém os visuais e não altera o movimento
-        if (this._isAttacking) {
-            this.commonUpdate(delta);
-            return;
-        }
-
         // Define o grupo de inimigos (adversários)
         const enemies = this.team === 'ally' ? this.scene.enemyPlayers : this.scene.alliedPlayers;
 
@@ -134,8 +128,11 @@ export default class AIPlayer extends PlayerBase {
             moveAngle = -Math.PI / 2; // força ir para cima
         }
 
-        // Velocidade cheia do rank, igual ao jogador (espelha BOT_SPEED_FACTOR = 1)
-        const speed = this._currentRank.speed;
+        // Velocidade cheia do rank, igual ao jogador (espelha BOT_SPEED_FACTOR = 1).
+        // Durante o golpe, reduzida: antes o bot mantinha a velocidade do
+        // quadro anterior e deslizava solto pelos 200 ms do windup.
+        const speed = this._currentRank.speed *
+            (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
         const vx = Math.cos(moveAngle) * speed;
         const vy = Math.sin(moveAngle) * speed;
         this.setVelocity(vx, vy);
@@ -145,6 +142,12 @@ export default class AIPlayer extends PlayerBase {
         else if (vx > 0) this.setFlipX(false);
 
         // --- ATAQUE ---
+        // Golpe em curso: não encadeia carga nem novo ataque.
+        if (this._isAttacking) {
+            this.commonUpdate(delta);
+            return;
+        }
+
         if (this._isCharging) {
             this.stepCharge(nearestEnemy, enemies);
         } else {
