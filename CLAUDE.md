@@ -79,6 +79,61 @@ Cada peça existe em duas artes: `assets/<peça>_<tamanho>.png` (clara) e `asset
 
 A cor vem do time **absoluto**, nunca de `isOpponent`. `isOpponent` é relativo a quem olha: usá-lo pintaria a mesma peça de cores diferentes em cada tela. O relativo sobrou só na moldura de debug (`applyDebugColor()`: amarelo eu, verde meu time, vermelho o adversário).
 
+### Navegação dos bots
+
+Antes o bot mirava o inimigo em linha reta. Com rio e muralha no mapa isso
+significava encostar na parede e ficar empurrando: medido, 10 bots percorriam
+117 px somados em 20 s, com 14 px de progresso líquido, e **nenhum** chegava a
+um inimigo. A oscilação contra a parede também chegava ao cliente como
+tremedeira — o que parecia "lag" era isso.
+
+`NavGrid.ts` (servidor) resolve com um grid derivado da **mesma máscara de
+colisão**: célula de 32 px, 156 × 53 = 8268 células, montado uma vez na subida
+junto com os componentes conexos. A ponte tem ~96 px livres (3 células) — com
+64 px ela sumiria do grid, e é justamente a travessia que o bot precisa achar.
+Não existe regra de "rio" ou "ponte": a ponte é célula caminhável como
+qualquer outra.
+
+As células usam os raios da **rainha** (a maior peça): rota aprovada ali serve
+para qualquer rank.
+
+**O A* quase nunca roda.** A ordem em `World.navigateAngle` é do mais barato ao
+mais caro:
+
+1. **linha de visão livre** → vai direto e descarta a rota (caso comum);
+2. **rota em andamento** → segue o waypoint;
+3. **sem rota** → pede A*, respeitando `BOT_REPATH_MIN_MS` (700 ms por bot),
+   `BOT_PATHS_PER_TICK` (2 na sala inteira) e a consulta O(1) de componentes,
+   que descarta alvos inalcançáveis sem busca nenhuma.
+
+O caminho é recalculado por **evento**: rota acabou, o alvo andou mais que
+`BOT_REPATH_TARGET_MOVE` (220 px), ou o bot travou.
+
+**Bot travado**: a cada `BOT_STUCK_CHECK_MS` (600 ms) compara-se o quanto ele
+andou; abaixo de `BOT_STUCK_MIN_PROGRESS` (24 px) a rota é descartada e o
+recálculo liberado na hora. É isso que tira o bot da margem e o manda à ponte.
+
+Só limpar a rota não resolve **quina**: o A* devolve praticamente o mesmo
+caminho e ele reencalha no mesmo canto. Por isso a travada também liga o
+contorno (`BOT_UNSTICK_MS`, 500 ms), em que o bot ignora o waypoint e anda numa
+tangente de ~70° (`BOT_UNSTICK_ANGLE`) — e **alterna o lado** a cada travada, em
+vez de insistir no mesmo. É movimento normal, sem teleporte.
+
+A rota sai **suavizada**: pontos que dá para pular em linha reta são
+descartados, senão o bot andaria em escadinha de 32 px trocando de direção o
+tempo todo. Cuidado ao mexer em `suaviza()` — a primeira versão entrava em
+laço infinito quando nem o primeiro ponto tinha linha de visão, e derrubava o
+processo com "invalid size error".
+
+O movimento em si não mudou: o waypoint vira um ângulo e o resto é o mesmo
+`vx/vy`, com a mesma colisão e a mesma velocidade — a separação entre
+personagens continua cuidando de vários bots na mesma ponte.
+
+**Custo medido**: tick médio 0,10 ms com 10–20 bots e 0,21 ms com 40, dos 50 ms
+de orçamento. Em 30 s, nenhum bot fica quase parado e nenhum termina dentro de
+parede. Tráfego: **1,5 KB/s por cliente**, 96 B por patch — nem CPU nem rede são
+gargalo aqui.
+
 ### Placar e IA dos bots
 
 **Placar.** [Scoreboard.js](src/ui/Scoreboard.js) é usado pelos dois modos e não sabe de onde vêm os dados: recebe uma função que devolve linhas `{name, team, kills, deaths, isLocal}`. Cada cena tem seu adaptador — `Arena.scoreRows()` lê o schema do servidor, `Start.scoreRows()` varre os grupos de sprites. Só monta a string com o painel aberto, e no máximo a cada 200 ms.
@@ -149,9 +204,10 @@ segunda cópia de `WORLD_WIDTH` e a `Arena` importava justamente a que já não
 existia mais — os clamps viravam `NaN`.
 
 **A máscara é a mesma imagem nos dois lados.** Livre = canal vermelho > 128 (o
-limiar perdoa o anti-aliasing da borda). Cinco pontos por teste — centro e as
-quatro pontas da elipse, a 70% dos raios — em vez de um pixel só, senão metade
-do corpo entra na parede.
+limiar perdoa o anti-aliasing da borda). **Nove pontos por teste** — centro,
+quatro pontas e quatro diagonais da elipse, a 70% dos raios. As diagonais não
+são luxo: com só as pontas, uma quina entra pelo vão entre elas e o ombro do
+corpo termina dentro da pedra.
 
 | Onde | O quê |
 | --- | --- |
@@ -163,17 +219,34 @@ máscara num módulo compartilhado): ~512 KB de bits para os 2496×1684 da metad
 consultados por índice. Nenhum tick abre arquivo, decodifica imagem ou varre o
 mapa.
 
-**Deploy.** A fonte única é o asset do cliente; `npm run build` do servidor roda
-`scripts/copy-collision.mjs`, que copia o PNG para `chess-armageddon-server/assets/`
-(ignorado pelo git). `COLLISION_MASK_PATH` sobrescreve o caminho se preciso. Se a
-máscara não existir ou tiver tamanho diferente do esperado, o servidor **falha na
-subida** — melhor que descobrir em jogo que todo mundo atravessa parede.
+**Deploy.** A arte é do cliente, mas a cópia em
+`chess-armageddon-server/assets/collision.png` é **versionada** (28 KB) — cliente
+e servidor têm deploys separados e, no host do servidor, a pasta do cliente não
+existe. Ao mudar a arte de colisão, rode `npm run sync:mask` no servidor e
+commite a cópia. `COLLISION_MASK_PATH` sobrescreve o caminho se preciso.
 
-**Resolução do movimento** (`resolveMove`, idêntica nos dois lados): tenta o
-destino inteiro; se não couber, desliza mantendo só X; depois só Y; senão fica.
-Testar o destino diagonal como um ponto único é o que impede atravessar quinas.
-A posição inválida **nunca é aceita** — não existe "andou e voltou", que é o que
-produziria teleporte e jitter.
+A máscara é carregada em `app.config.ts`, **antes de o servidor aceitar
+conexões**: faltando o arquivo (ou com tamanho diferente do esperado) ele não
+sobe, e o log diz onde procurou. Carregar isso na primeira sala, como era antes,
+produzia um sintoma enganoso: `/health` respondia 200, `POST
+/matchmake/create/arena` devolvia 523 e o navegador acusava **CORS** — porque a
+página de erro da borda não traz `Access-Control-Allow-Origin`. O CORS em si o
+Colyseus já resolve sozinho.
+
+**Resolução do movimento** (`resolveMove`, idêntica nos dois lados): três
+candidatos — seguir na diagonal, deslizar em X, deslizar em Y —, cada um levado
+até **encostar** por bisseção (`maxAlong`, 4 cortes: para a menos de 1 px da
+parede). Vence o que rende mais deslocamento. A versão anterior era
+tudo-ou-nada e parava o personagem a um passo da parede; o bot então empurrava o
+vazio sem sair do lugar. A posição inválida **nunca é aceita** — não existe
+"andou e voltou", que produziria teleporte e jitter.
+
+**Partida inválida tem resgate.** Se o ponto de origem já está dentro da parede
+(separação entre personagens, empurrão de golpe, clamp da borda), a bisseção
+partiria de um ponto ruim e o personagem *deslizaria dentro* da muralha, preso
+para sempre. `nearestFree` procura o ponto livre mais próximo numa espiral curta
+(até 96 px) e devolve o personagem para lá. É um empurrão de poucos pixels em
+estado já quebrado — não é o caminho normal de movimento.
 
 No servidor o `tick` ficou: mover com colisão → separar personagens → clamp da
 borda → **revalidar**. A revalidação existe porque a separação e o clamp podem

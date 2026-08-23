@@ -55,11 +55,38 @@ export default class MapCollider {
     canStand(cx, cy, rx, ry) {
         const dx = rx * 0.7;
         const dy = ry * 0.7;
+        // Diagonais sobre a mesma elipse (cos45 ≈ 0,7071): sem elas uma quina
+        // entra pelo vão entre as pontas e o ombro do corpo fica na parede.
+        const ix = dx * 0.7071;
+        const iy = dy * 0.7071;
+
         return this.isWalkable(cx, cy) &&
                this.isWalkable(cx + dx, cy) &&
                this.isWalkable(cx - dx, cy) &&
                this.isWalkable(cx, cy + dy) &&
-               this.isWalkable(cx, cy - dy);
+               this.isWalkable(cx, cy - dy) &&
+               this.isWalkable(cx + ix, cy + iy) &&
+               this.isWalkable(cx + ix, cy - iy) &&
+               this.isWalkable(cx - ix, cy + iy) &&
+               this.isWalkable(cx - ix, cy - iy);
+    }
+
+    /**
+     * Maior fração do deslocamento que ainda cabe, 0..1. Espelha
+     * `CollisionMask.maxAlong` do servidor: quatro cortes bastam para parar a
+     * menos de 1 px da parede, num passo de quadro.
+     */
+    maxAlong(x, y, dx, dy, offsetY, rx, ry) {
+        if (this.canStand(x + dx, y + dy + offsetY, rx, ry)) return 1;
+
+        let baixo = 0;
+        let alto = 1;
+        for (let i = 0; i < 4; i++) {
+            const meio = (baixo + alto) / 2;
+            if (this.canStand(x + dx * meio, y + dy * meio + offsetY, rx, ry)) baixo = meio;
+            else alto = meio;
+        }
+        return baixo;
     }
 
     /**
@@ -72,11 +99,53 @@ export default class MapCollider {
      *
      * @param {number} offsetY Distância de `y` até o centro da elipse.
      */
+    /**
+     * Ponto livre mais próximo, em espiral curta. Espelha
+     * `CollisionMask.nearestFree` do servidor.
+     *
+     * Rede de resgate para quando a posição de PARTIDA já é inválida (empurrão,
+     * separação entre personagens, clamp da borda). Sem isto a bisseção parte de
+     * um ponto ruim e o personagem desliza DENTRO da parede, preso.
+     */
+    nearestFree(x, y, offsetY, rx, ry) {
+        for (let raio = 8; raio <= 96; raio += 8) {
+            for (let i = 0; i < 8; i++) {
+                const ang = (i / 8) * Math.PI * 2;
+                const px = x + Math.cos(ang) * raio;
+                const py = y + Math.sin(ang) * raio;
+                if (this.canStand(px, py + offsetY, rx, ry)) return { x: px, y: py };
+            }
+        }
+        return null;
+    }
+
     resolveMove(prevX, prevY, nextX, nextY, offsetY, rx, ry) {
+        if (!this.canStand(prevX, prevY + offsetY, rx, ry)) {
+            const saida = this.nearestFree(prevX, prevY, offsetY, rx, ry);
+            if (saida) return saida;
+            return { x: prevX, y: prevY };
+        }
+
+        const dx = nextX - prevX;
+        const dy = nextY - prevY;
+
         if (this.canStand(nextX, nextY + offsetY, rx, ry)) return { x: nextX, y: nextY };
-        if (this.canStand(nextX, prevY + offsetY, rx, ry)) return { x: nextX, y: prevY };
-        if (this.canStand(prevX, nextY + offsetY, rx, ry)) return { x: prevX, y: nextY };
-        return { x: prevX, y: prevY };
+
+        // Bateu: vai na diagonal, em X ou em Y — o que render mais, e sempre
+        // até ENCOSTAR. Parar seco deixava o personagem a um passo da parede.
+        const tDiag = (dx !== 0 && dy !== 0) ? this.maxAlong(prevX, prevY, dx, dy, offsetY, rx, ry) : 0;
+        const tX = dx !== 0 ? this.maxAlong(prevX, prevY, dx, 0, offsetY, rx, ry) : 0;
+        const tY = dy !== 0 ? this.maxAlong(prevX, prevY, 0, dy, offsetY, rx, ry) : 0;
+
+        const avancoDiag = tDiag * Math.hypot(dx, dy);
+        const avancoX = tX * Math.abs(dx);
+        const avancoY = tY * Math.abs(dy);
+
+        if (avancoDiag >= avancoX && avancoDiag >= avancoY) {
+            return { x: prevX + dx * tDiag, y: prevY + dy * tDiag };
+        }
+        if (avancoX >= avancoY) return { x: prevX + dx * tX, y: prevY };
+        return { x: prevX, y: prevY + dy * tY };
     }
 
     /**

@@ -984,23 +984,19 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         let newY = Phaser.Math.Clamp(this.y, bounds.y + halfH, bounds.bottom - halfH);
         this.setPosition(newX, newY);
 
-        // Deslizamento (Sliding) contra pixels pretos
+        // Deslize contra o cenário. A resolução vive no `MapCollider` e é a
+        // MESMA que o servidor usa (`CollisionMask.resolveMove`): tenta a
+        // diagonal, o eixo X e o eixo Y, cada um até encostar, e fica com o que
+        // render mais. Antes isto era um if aninhado aqui dentro que, na quina,
+        // devolvia o personagem para a posição do quadro anterior — ele parava
+        // a um passo da parede e, no caso do bot, ficava empurrando o vazio.
         if (mapCollider && this._prevX !== undefined && this._prevY !== undefined) {
-            if (!this.isPositionWalkable(mapCollider)) {
-                
-                // Bateu. Tenta deslizar mantendo só o eixo X
-                this.setPosition(newX, this._prevY);
-                if (!this.isPositionWalkable(mapCollider)) {
-                    
-                    // Não deu. Tenta deslizar mantendo só o eixo Y
-                    this.setPosition(this._prevX, newY);
-                    if (!this.isPositionWalkable(mapCollider)) {
-                        
-                        // Quina absoluta, volta para onde estava no frame passado
-                        this.setPosition(this._prevX, this._prevY);
-                    }
-                }
-            }
+            const offsetY = this.displayHeight / 2 - this.collisionRx + (this.collisionRy * 4) / 3;
+            const destino = mapCollider.resolveMove(
+                this._prevX, this._prevY, newX, newY,
+                offsetY, this.collisionRx, this.collisionRy
+            );
+            this.setPosition(destino.x, destino.y);
         }
 
         this.body.updateFromGameObject(); // Atualiza a hitbox Arcade
