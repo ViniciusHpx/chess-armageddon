@@ -6,11 +6,12 @@ import XpBar from '../ui/XpBar.js';
 import {
     ATTACK_MOVE_FACTOR, attackRecoveryMs, attackWindupMs, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
-    RANKS, RANK_ORDER, TEAM_ORDER, WORLD_WIDTH, WORLD_HEIGHT
+    RANKS, RANK_ORDER, TEAM_ORDER
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice } from '../net/netconfig.js';
-import { ARENA_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
+import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
+import MapCollider from '../utils/MapCollider.js';
 
 /**
  * Cena multiplayer. Toda a regra do jogo mora em `chess-armageddon-server`;
@@ -92,10 +93,18 @@ export class Arena extends Phaser.Scene {
         this.load.spritesheet('horse_black', 'assets/horse_144_b.png', { frameWidth: 144, frameHeight: 144 });
         this.load.spritesheet('bishop_black', 'assets/bishop_144_b.png', { frameWidth: 144, frameHeight: 144 });
         this.load.spritesheet('queen_black', 'assets/queen_160_b.png', { frameWidth: 160, frameHeight: 160 });
+
+        // Máscara de colisão. O servidor é a autoridade sobre a posição; esta
+        // cópia serve só para a PREVISÃO local respeitar as mesmas paredes —
+        // sem ela o boneco entraria na muralha e a reconciliação o arrancaria
+        // de volta a cada quadro.
+        this.load.image('collision_map', COLLISION_PATH);
     }
 
     create() {
         this.createAuraTexture();
+
+        this.mapCollider = new MapCollider(this, 'collision_map');
 
         this.add.image(0, 0, 'grass').setOrigin(0, 0);
         this.add.image(HALF_WORLD_WIDTH, 0, 'grass').setOrigin(0, 0).setFlipX(true);
@@ -624,6 +633,9 @@ export class Arena extends Phaser.Scene {
         const dashLocal = this.time.now < this.localDashUntil && this.localDashRemaining > 0;
         const emDash = dashLocal || localState.dashing;
 
+        const antesColisaoX = this.predX;
+        const antesColisaoY = this.predY;
+
         if (dashLocal) {
             // Dash manda na previsão enquanto dura, como no `stepPlayer` do
             // servidor. A velocidade é limitada pelo que falta percorrer (a
@@ -649,6 +661,22 @@ export class Arena extends Phaser.Scene {
 
         this.predX = Phaser.Math.Clamp(this.predX, halfW, WORLD_WIDTH - halfW);
         this.predY = Phaser.Math.Clamp(this.predY, halfH, WORLD_HEIGHT - halfH);
+
+        // Mesma resolução do servidor (`CollisionMask.resolveMove`): tenta o
+        // destino, desliza em X, desliza em Y, senão fica. O dash também passa
+        // por aqui — impulso não é licença para atravessar muralha.
+        if (this.mapCollider) {
+            const rank = RANKS[RANK_ORDER[localState.rank]];
+            const rx = 50 * (rank.size.width / 128);
+            const ry = 25 * (rank.size.height / 128);
+            const offsetY = rank.size.height / 2 - rx + (ry * 4) / 3;
+
+            const resolvido = this.mapCollider.resolveMove(
+                antesColisaoX, antesColisaoY, this.predX, this.predY, offsetY, rx, ry
+            );
+            this.predX = resolvido.x;
+            this.predY = resolvido.y;
+        }
 
         this.segDx += this.predX - antesX;
         this.segDy += this.predY - antesY;

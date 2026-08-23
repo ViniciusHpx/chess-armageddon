@@ -135,6 +135,74 @@ No online nada disso está no cliente: o `World` do servidor integra o empurrão
 
 `mass` controla só o empurrão entre personagens (ver abaixo); é lida via `getCollisionMass()` e não tem relação com `body.mass` do Arcade.
 
+### Mapa e colisão com o cenário
+
+**Dimensões: 4992 × 1684.** Os assets (`assets/arena.png` e
+`assets/collision.png`) são a **metade esquerda**, 2496 × 1684; o mundo é essa
+metade mais o espelho dela em X. Daí `WORLD_WIDTH = HALF_WORLD_WIDTH * 2`, e o
+mesmo espelhamento vale para o desenho (duas imagens, a segunda com `flipX`) e
+para a máscara (`px >= halfWidth → width - 1 - px`).
+
+As dimensões vivem em [Scenario.js](src/constants/Scenario.js) (cliente) e em
+`constants.ts` (servidor). Nada de número solto: `Hierarchy.js` chegou a ter uma
+segunda cópia de `WORLD_WIDTH` e a `Arena` importava justamente a que já não
+existia mais — os clamps viravam `NaN`.
+
+**A máscara é a mesma imagem nos dois lados.** Livre = canal vermelho > 128 (o
+limiar perdoa o anti-aliasing da borda). Cinco pontos por teste — centro e as
+quatro pontas da elipse, a 70% dos raios — em vez de um pixel só, senão metade
+do corpo entra na parede.
+
+| Onde | O quê |
+| --- | --- |
+| [MapCollider.js](src/utils/MapCollider.js) | cliente: lê os pixels via `<canvas>` |
+| `sim/CollisionMask.ts` | servidor: decodifica o PNG uma vez (pngjs) e vira bitset |
+
+No servidor a decodificação acontece **uma vez por processo** (`World` guarda a
+máscara num módulo compartilhado): ~512 KB de bits para os 2496×1684 da metade,
+consultados por índice. Nenhum tick abre arquivo, decodifica imagem ou varre o
+mapa.
+
+**Deploy.** A fonte única é o asset do cliente; `npm run build` do servidor roda
+`scripts/copy-collision.mjs`, que copia o PNG para `chess-armageddon-server/assets/`
+(ignorado pelo git). `COLLISION_MASK_PATH` sobrescreve o caminho se preciso. Se a
+máscara não existir ou tiver tamanho diferente do esperado, o servidor **falha na
+subida** — melhor que descobrir em jogo que todo mundo atravessa parede.
+
+**Resolução do movimento** (`resolveMove`, idêntica nos dois lados): tenta o
+destino inteiro; se não couber, desliza mantendo só X; depois só Y; senão fica.
+Testar o destino diagonal como um ponto único é o que impede atravessar quinas.
+A posição inválida **nunca é aceita** — não existe "andou e voltou", que é o que
+produziria teleporte e jitter.
+
+No servidor o `tick` ficou: mover com colisão → separar personagens → clamp da
+borda → **revalidar**. A revalidação existe porque a separação e o clamp podem
+empurrar alguém para dentro da muralha; nesse caso o ator volta para
+`lastValidX/Y`. `Actor.teleport()` é o jeito de reposicionar sem brigar com essa
+rede (spawn, respawn, testes).
+
+**A previsão do cliente online usa a mesma máscara** ([Arena.js](src/scenes/Arena.js)).
+Sem isso o boneco entraria na parede localmente e a reconciliação o arrancaria de
+volta a cada quadro. Medido contra a muralha oeste: o erro entre previsão e
+servidor cai de 89 px para 1 px e os dois param no mesmo pixel.
+
+### Spawn
+
+Cada time nasce **no próprio castelo**: `SPAWN_ZONE` (retângulo do pátio,
+espelhado em X para o time `enemy`) está em `constants.ts` e em
+[Scenario.js](src/constants/Scenario.js).
+
+O retângulo é generoso de propósito — o pátio tem construções internas, e quem
+garante chão livre é a máscara. `World.placeAtSpawn` (online) e
+`PlayerBase.moveToSpawn` (offline) sorteiam dentro da zona e validam: dentro do
+mapa, fora de parede e — no servidor — a pelo menos `SPAWN_MIN_DISTANCE` de quem
+já está lá. É rejection sampling com teto de tentativas (`SPAWN_ATTEMPTS`), sem
+varrer o mapa e sem laço infinito quando o castelo enche.
+
+Uma pegadinha: no spawn o offset até o centro da elipse tem de sair da geometria
+do rank, **não** de `getEllipseCenter()` — aquele lê `body.center`, que só
+sincroniza no `preUpdate` seguinte, e a validação testaria o pixel errado.
+
 ### Colisão entre personagens
 
 **Não existe `physics.add.collider` entre os personagens** — o corpo Arcade é um retângulo que apenas circunscreve a elipse real, o que causava colisão fantasma nos cantos e separação axis-aligned (personagens enganchando). A separação é feita em [CollisionResolver.js](src/utils/CollisionResolver.js), chamado no `postupdate`.
@@ -325,8 +393,7 @@ Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o 
 
 ## Pendências conhecidas
 
-- `assets/map_collision_3548_1774.png` é pré-carregado como `'collision_map'` mas **nunca usado** — colisão com o cenário ainda não foi implementada.
-- Dimensões do mapa (3548×1774) estão hardcoded em `Start.create()`.
+- Assets antigos (`map*.png`, `map_collision*.png`) continuam na pasta sem uso — o mapa em vigor é `arena.png` + `collision.png`.
 - A hitbox de debug é sempre desenhada (não há flag para desligar).
 
 ## Modo online (cena `Arena`)

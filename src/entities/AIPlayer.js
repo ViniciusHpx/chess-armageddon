@@ -65,12 +65,7 @@ export default class AIPlayer extends PlayerBase {
     }
 
     respawn() {
-        const worldBounds = this.scene.physics.world.bounds;
-        const margin = 100;
-        const x = Phaser.Math.Between(margin, worldBounds.width - margin);
-        const y = Phaser.Math.Between(margin, worldBounds.height - margin);
-
-        this.setPosition(x, y);
+        this.moveToSpawn(this.scene.mapCollider, 500, 700);
         this.resetProgressOnDeath();
         this.updateHealthBar();
 

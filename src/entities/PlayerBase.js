@@ -939,18 +939,37 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     // No final da classe PlayerBase...
 
     /** Verifica o centro e as bordas da elipse para o personagem não atravessar paredes */
+    /**
+     * Nasce (ou renasce) no castelo do próprio time, em chão livre.
+     *
+     * Sem colisor não há o que validar: cai na posição de reserva, que é o
+     * comportamento antigo.
+     */
+    moveToSpawn(mapCollider, reservaX, reservaY) {
+        if (!mapCollider) {
+            this.setPosition(reservaX, reservaY);
+        } else {
+            // O offset sai da geometria do rank, não de `getEllipseCenter()`:
+            // aquele lê `body.center`, que só é sincronizado no `preUpdate` do
+            // quadro seguinte — no spawn ele ainda aponta para a posição
+            // anterior e a validação testaria o pixel errado.
+            const offsetY = this.displayHeight / 2 - this.collisionRx + (this.collisionRy * 4) / 3;
+            const ponto = mapCollider.findSpawn(this.team, this.collisionRx, this.collisionRy, offsetY);
+            this.setPosition(ponto.x, ponto.y);
+        }
+
+        if (this.body) this.body.updateFromGameObject();
+        // O deslize compara com a posição do quadro anterior: sem zerar isto, o
+        // personagem seria puxado de volta para onde estava antes de renascer.
+        this._prevX = this.x;
+        this._prevY = this.y;
+    }
+
     isPositionWalkable(mapCollider) {
         if (!mapCollider) return true;
 
         const center = this.getEllipseCenter();
-        const rx = this.collisionRx * 0.7; // Margem menor que 100% para perdoar resvalos
-        const ry = this.collisionRy * 0.7;
-
-        return mapCollider.isWalkable(center.x, center.y) &&
-               mapCollider.isWalkable(center.x + rx, center.y) &&
-               mapCollider.isWalkable(center.x - rx, center.y) &&
-               mapCollider.isWalkable(center.x, center.y + ry) &&
-               mapCollider.isWalkable(center.x, center.y - ry);
+        return mapCollider.canStand(center.x, center.y, this.collisionRx, this.collisionRy);
     }
 
     /** 

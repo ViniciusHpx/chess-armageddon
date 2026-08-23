@@ -54,7 +54,7 @@ export default class HumanPlayer extends PlayerBase {
     respawn() {
         this.resetProgressOnDeath();
 
-        this.setPosition(640, 360);
+        this.moveToSpawn(this.scene.mapCollider, 640, 360);
         this.setVelocity(0, 0);
 
         this.setActive(true);
