@@ -15,13 +15,15 @@
  * metadata e devolve a escolha. Toda a regra é do servidor.
  */
 
+import { GAME_MODES, GAME_MODE_LABELS, DEFAULT_GAME_MODE } from '../constants/Hierarchy.js';
+
 const MAX_BOTS = 5;
 
 /**
  * Abre o lobby e resolve com a escolha do jogador.
  *
  * @param {object} client Cliente Colyseus já construído.
- * @returns {Promise<{ create: true, bots: number } | { roomId: string }>}
+ * @returns {Promise<{ create: true, bots: number, mode: string } | { roomId: string }>}
  */
 export async function openLobby(client) {
     const el = {
@@ -31,6 +33,7 @@ export async function openLobby(client) {
         create: document.getElementById('lobby-create'),
         form: document.getElementById('lobby-form'),
         bots: document.getElementById('lobby-bots'),
+        mode: document.getElementById('lobby-mode'),
         confirm: document.getElementById('lobby-confirm'),
         cancel: document.getElementById('lobby-cancel')
     };
@@ -68,7 +71,10 @@ export async function openLobby(client) {
         const fecharForm = () => { el.form.hidden = true; };
         const confirmar = () => {
             const bots = Math.min(MAX_BOTS, Math.max(0, Number(el.bots.value) || 0));
-            escolher({ create: true, bots });
+            // O servidor revalida os dois valores; isto aqui só evita mandar
+            // lixo óbvio se alguém mexer no `<select>` pelo DevTools.
+            const mode = GAME_MODES.includes(el.mode.value) ? el.mode.value : DEFAULT_GAME_MODE;
+            escolher({ create: true, bots, mode });
         };
 
         /** Todos os listeners saem juntos: a tela some e não volta. */
@@ -138,11 +144,15 @@ function cartao(sala) {
     // O id vira o rótulo da sala: é curto, único e já vem do servidor.
     const nome = `Sala #${String(sala.roomId).slice(0, 4).toUpperCase()}`;
 
+    // O modo vem da metadata (já saneado pelo servidor); sala antiga, sem o
+    // campo, aparece com o padrão em vez de "undefined".
+    const modo = GAME_MODE_LABELS[meta.mode] || GAME_MODE_LABELS[DEFAULT_GAME_MODE];
+
     return `
         <li class="lobby-room">
             <div>
                 <strong>${nome}</strong>
-                <span>Jogadores: ${players}/${capacity} &middot; Bots: ${bots}</span>
+                <span>${modo} &middot; Jogadores: ${players}/${capacity} &middot; Bots: ${bots}</span>
             </div>
             <button type="button" data-room-id="${sala.roomId}" ${cheia ? 'disabled' : ''}>
                 ${cheia ? 'CHEIA' : 'ENTRAR'}

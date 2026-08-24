@@ -4,7 +4,7 @@ import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
 import {
-    ATTACK_MOVE_FACTOR, attackRecoveryMs, attackWindupMs, chargePower,
+    movementFactor, attackRecoveryMs, attackWindupMs, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, RANK_ORDER, TEAM_ORDER
 } from '../constants/Hierarchy.js';
@@ -270,7 +270,9 @@ export class Arena extends Phaser.Scene {
             if (escolha && escolha.roomId) {
                 this.room = await client.joinById(escolha.roomId, { name });
             } else if (escolha && escolha.create) {
-                this.room = await client.create(ROOM_NAME, { name, bots: escolha.bots });
+                this.room = await client.create(ROOM_NAME, {
+                    name, bots: escolha.bots, mode: escolha.mode,
+                });
             } else {
                 this.room = await client.joinOrCreate(ROOM_NAME, { name });
             }
@@ -647,12 +649,13 @@ export class Arena extends Phaser.Scene {
             this.predX += this.localDashDirX * speed * dt;
             this.predY += this.localDashDirY * speed * dt;
         } else {
-            // Golpe em curso: anda devagar, não para. O fator é o mesmo do
-            // servidor; a previsão o aplica desde o ENVIO do ataque, e não desde
-            // a confirmação, senão o RTT vira divergência e a reconciliação puxa
-            // o boneco para trás.
+            // Golpe em curso: anda devagar; carregando, mais devagar ainda. Os
+            // fatores são os mesmos do servidor (`movementFactor`), e a previsão
+            // os aplica desde o ENVIO — não desde a confirmação —, senão o RTT
+            // vira divergência e a reconciliação puxa o boneco para trás.
             const atacando = localState.attacking || this.localAttackPending;
-            const fator = atacando ? ATTACK_MOVE_FACTOR : 1;
+            const carregando = this.localCharging || localState.charging;
+            const fator = movementFactor(atacando, carregando);
             const { dx, dy } = this.inputs.getMovementVector();
             const speed = RANKS[RANK_ORDER[localState.rank]].speed * fator;
             this.predX += dx * speed * dt;

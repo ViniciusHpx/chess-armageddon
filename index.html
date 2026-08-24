@@ -196,7 +196,8 @@
                 color: #9d9ab5;
             }
 
-            #lobby-bots {
+            #lobby-bots,
+            #lobby-mode {
                 width: 100%;
             }
 
@@ -256,6 +257,13 @@
             <button id="lobby-create" type="button">CRIAR SALA</button>
 
             <div id="lobby-form" hidden>
+                <label for="lobby-mode">Modo de jogo</label>
+                <select id="lobby-mode">
+                    <option value="team_deathmatch" selected>Team Deathmatch</option>
+                    <option value="capture_the_flag">Rouba Bandeira</option>
+                    <option value="free_for_all">Todos contra Todos</option>
+                </select>
+
                 <label for="lobby-bots">Bots por time (o servidor completa os times)</label>
                 <select id="lobby-bots">
                     <option value="0">0 bots</option>

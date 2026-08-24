@@ -14,6 +14,42 @@
  */
 export const ATTACK_MOVE_FACTOR = 0.6;
 
+/**
+ * Fração da velocidade enquanto o golpe está sendo CARREGADO (espelha
+ * `CHARGE_MOVE_FACTOR` do servidor).
+ *
+ * Mais lento que durante o próprio golpe: segurar a carga passa a custar
+ * posicionamento, não só tempo.
+ */
+export const CHARGE_MOVE_FACTOR = 0.45;
+
+/**
+ * Fator de velocidade do estado de combate — fonte única, igual à do servidor.
+ * Calcular isso solto em cada lugar faria previsão, simulação e modo offline
+ * divergirem.
+ */
+export function movementFactor(attacking, charging) {
+    if (attacking) return ATTACK_MOVE_FACTOR;
+    if (charging) return CHARGE_MOVE_FACTOR;
+    return 1;
+}
+
+/**
+ * Modos de jogo. A ORDEM é contrato de rede (é o índice que trafega em
+ * `ArenaState.mode`); modo novo entra no fim. As regras de cada modo ainda não
+ * existem — por ora o modo é só o rótulo da sala.
+ */
+export const GAME_MODES = ['team_deathmatch', 'capture_the_flag', 'free_for_all'];
+
+export const GAME_MODE_LABELS = {
+    team_deathmatch: 'Team Deathmatch',
+    capture_the_flag: 'Rouba Bandeira',
+    free_for_all: 'Todos contra Todos'
+};
+
+/** Padrão e fallback: é o comportamento que o jogo já tem hoje. */
+export const DEFAULT_GAME_MODE = 'team_deathmatch';
+
 // ---------------------------------------------------------------------------
 // GOLPE: LEVE <-> CARREGADO  (espelho de `constants.ts` do servidor)
 //

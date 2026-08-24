@@ -27,7 +27,7 @@ export const LOBBY_ROOM_NAME = "lobby";
  * `?room=<id>` na URL pula o lobby e entra direto: serve para abrir a mesma
  * sala em duas abas sem repetir o fluxo.
  *
- * @type {{ create?: true, bots?: number, roomId?: string } | null}
+ * @type {{ create?: true, bots?: number, mode?: string, roomId?: string } | null}
  */
 let joinChoice = null;
 

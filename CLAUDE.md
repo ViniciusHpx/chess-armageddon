@@ -338,6 +338,20 @@ dois, e o leve rende mais dano por segundo. O carregado paga por: alcance
 dobrado (pega quem está fugindo), empurrão que cria espaço, e matar em dois
 golpes em vez de quatro.
 
+**Carregar deixa lento.** Enquanto a carga está em curso o personagem anda a
+`CHARGE_MOVE_FACTOR` (0,45) da velocidade — mais devagar que durante o próprio
+golpe (0,6). Segurar a carga passa a custar posicionamento, não só tempo. Quem
+decide o fator é `movementFactor(attacking, charging)`, definida no servidor e
+espelhada em [Hierarchy.js](src/constants/Hierarchy.js): é a **única** fonte do
+fator, usada pelo `stepPlayer`/`stepBot`, pela previsão da `Arena` e pelo modo
+offline. Nada de recalcular velocidade solto em cada lugar — foi assim que
+previsão e simulação ficaram idênticas (erro medido de 0,05 px enquanto carrega).
+
+O estado que vale é o do servidor: o cliente só manda *apertei*/*soltei*, e a
+lentidão sai do `charging` do próprio `Actor`. Soltar, cancelar (dash, morte) ou
+ter a carga recusada devolve a velocidade no mesmo tick, porque o fator é lido
+do estado — não existe timer paralelo para dessincronizar.
+
 **Recuperação (`attackRecoveryMs`)** é nova e vale para humanos e bots: antes o
 humano não tinha cooldown nenhum e segurar o botão rendia golpe atrás de golpe.
 É ela que faz o servidor recusar carga cedo demais — o freio de spam.
@@ -520,6 +534,21 @@ vale igual para o lobby.
 `app.config.ts`), que empurra `rooms`, `+` e `-`. Quem dispara a atualização é a
 própria `ArenaRoom`, chamando `updateLobby()` ao criar, ao alguém entrar e ao
 alguém sair.
+
+**Modo de jogo.** Quem cria escolhe entre `team_deathmatch`, `capture_the_flag` e
+`free_for_all` (`GAME_MODES`). Hoje o modo é só um **rótulo**: nenhuma regra
+depende dele ainda. Ele existe para a escolha ficar registrada, aparecer no
+lobby e dar onde pendurar as regras depois.
+
+- validado no servidor por allowlist (`sanitizeGameMode`); qualquer outra coisa
+  — string arbitrária, número, objeto, ausente — vira `DEFAULT_GAME_MODE`
+  (`team_deathmatch`, que é o comportamento que o jogo já tem), então cliente
+  antigo e sala antiga continuam funcionando;
+- vai para a `metadata` (o lobby mostra antes de entrar) e para
+  `ArenaState.mode` como **índice** em `GAME_MODES`, no mesmo padrão de `rank` e
+  `team` — a ordem da lista é contrato de rede, modo novo entra no fim;
+- é escrito uma vez, na criação, e só pelo servidor. Não há mensagem para o
+  cliente trocar o modo de uma sala.
 
 **Slots.** Cada time tem `TEAM_SIZE` (5) slots. Quem cria escolhe quantos
 nascem bot; o resto fica vazio. Entrando um humano: **slot vazio primeiro**, e

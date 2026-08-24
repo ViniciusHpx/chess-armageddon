@@ -1,6 +1,6 @@
 import PlayerBase from './PlayerBase.js';
 import {
-    RANKS, attackHalfBand, attackReach, ATTACK_MOVE_FACTOR, DAMAGE_NORMAL, DAMAGE_CHARGED,
+    RANKS, attackHalfBand, attackReach, movementFactor, DAMAGE_NORMAL, DAMAGE_CHARGED,
     attackWindupMs, chargeAreaMult, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
 } from '../constants/Hierarchy.js';
 
@@ -178,7 +178,7 @@ export default class AIPlayer extends PlayerBase {
         // Durante o golpe, reduzida: antes o bot mantinha a velocidade do
         // quadro anterior e deslizava solto pelos 200 ms do windup.
         const speed = this._currentRank.speed *
-            (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
+            movementFactor(this._isAttacking, this._isCharging);
           
         const vx = Math.cos(moveAngle) * speed;
         const vy = Math.sin(moveAngle) * speed;
