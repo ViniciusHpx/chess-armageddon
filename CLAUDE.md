@@ -303,6 +303,18 @@ Formas suportadas: `rectangle`, `circle`, `lshape`, `diamond`. **Adicionar uma n
 
 Sequência: `performAttack()` marca `_isAttacking`, e um `delayedCall(200)` aplica o hit e finaliza. `_attackHitEnemies` (Set) evita dano duplo no mesmo golpe.
 
+**O ataque carregado está DESLIGADO** por `CHARGED_ATTACK_ENABLED` (`false` em
+`constants.ts` e espelhado em [Hierarchy.js](src/constants/Hierarchy.js) — as
+duas precisam ter o mesmo valor). Com a flag desligada, apertar o botão já sai
+como golpe leve (potência 0) e ninguém entra em estado de carga: no servidor
+`World.startCharge` chama `beginAttack(actor, 0)` e `botShouldCharge` devolve
+`false`; offline, `HumanPlayer` usa `PlayerBase.attackLight()` (a própria
+máquina de carga aberta e fechada no mesmo quadro) e `AIPlayer.shouldCharge`
+devolve `false`; na `Arena`, a previsão local desacelera já no aperto. **Nada
+foi removido** — os testes de carga do servidor continuam escritos e pulam
+sozinhos (`itCarregado`). Voltar a flag para `true` nos dois lados reativa tudo
+o que está descrito abaixo.
+
 **Carga contínua.** Segurar o botão não escolhe entre dois golpes: define uma
 **potência** `power = tempo segurado / rank.chargeTime`, limitada a 1. Era um
 booleano `charged`; hoje dano, área, empurrão, windup e recuperação saem todos
@@ -465,7 +477,7 @@ meio-termo: perde-se só o progresso rumo à próxima peça (a aura continua
 zerando).
 
 No online o cliente **não tem mensagem** para XP, nível ou rank — o protocolo é
-só `"i"`, `"a"`, `"d"` e `"r"`. `ActorState.xp` é escrita apenas pelo servidor.
+só `"i"`, `"a"`, `"d"`, `"r"` e `"rm"`. `ActorState.xp` é escrita apenas pelo servidor.
 
 A barra é a [XpBar](src/ui/XpBar.js), no padrão do `Scoreboard`: recebe uma
 função que devolve a XP total e cada cena liga na sua fonte (schema na `Arena`,
@@ -570,6 +582,41 @@ e o slot simplesmente volta a ficar vago.
 **Corrida pelo último slot.** `onJoin` roda uma vez por vez na sala, e a decisão
 (`pickTeam` → `hasSlot`) acontece dentro dele: o segundo pedido já enxerga o
 slot ocupado e é recusado. Não há checagem no cliente para burlar.
+
+### Fim de partida e revanche
+
+Só o `team_deathmatch` tem condição de vitória: a `ArenaRoom` repassa
+`TEAM_KILL_LIMIT` (40) ao `World.killLimit` na criação, e nos outros modos ele
+fica em 0 (arena sem fim, como sempre foi).
+
+O placar é do **time**, não somado dos atores: `World.teamKills` é incrementado
+em `registerTeamKill`, no mesmo ponto do abate — assim ele sobrevive à saída do
+jogador que matou. Batido o limite, `World.winner` é escrito ali mesmo e o
+`tick` passa a **retornar antes de tudo**, inclusive do relógio: a simulação
+inteira congela. A sala espelha o resultado em `ArenaState` (`scoreAlly`,
+`scoreEnemy`, `winner` como índice em `TEAM_ORDER`, -1 = em curso), trava com
+`lock()` e recusa entrada nova (`ServerError(4002)`).
+
+O cliente **não decide nada**: a [ResultScreen](src/ui/ResultScreen.js) aparece
+por causa de `winner` e some por causa dele. Ela é desenhada no padrão do
+`DeathScreen` (depth 10000, presa à câmera) e não sabe de modo, time nem rede —
+recebe `won`, o placar e os dois callbacks.
+
+**Revanche.** O cliente só manda `"rm"`; quem cria a sala é a `ArenaRoom`, uma
+vez por partida, com os mesmos bots e o mesmo modo. A trava `rematchCriando`
+existe porque `matchMaker.createRoom` é assíncrono — sem ela, dois cliques no
+mesmo instante criariam duas salas. O id vai para `state.rematchRoomId`, que
+todos recebem: quem aceitar depois entra na **mesma** sala.
+
+Entrar é recarregar a página com `?room=<id>` (`reloadIntoRoom` em
+[netconfig.js](src/net/netconfig.js)), reusando o fluxo que já pulava o lobby;
+o MENU faz o oposto (`reloadIntoLobby`, tira o `?room=`). Recarregar em vez de
+reiniciar a cena não deixa resto de conexão nem de listener da partida
+anterior.
+
+**O time oposto sai de graça**: o `pickTeam()` que já existia escolhe o time com
+menos humanos, então o segundo a chegar na sala da revanche cai no lado
+contrário ao do primeiro. Não há regra de "dois jogadores" em lugar nenhum.
 
 ### Nome do jogador
 

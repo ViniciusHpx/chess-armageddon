@@ -1,7 +1,7 @@
 import PlayerBase from './PlayerBase.js';
 import {
     RANKS, attackHalfBand, attackReach, movementFactor, DAMAGE_NORMAL, DAMAGE_CHARGED,
-    attackWindupMs, chargeAreaMult, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
+    attackWindupMs, chargeAreaMult, CHARGED_ATTACK_ENABLED, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
 } from '../constants/Hierarchy.js';
 
 /**
@@ -293,6 +293,10 @@ export default class AIPlayer extends PlayerBase {
      *      golpe possível de qualquer forma.
      */
     static shouldCharge(target, alcancaNormal, alcancaCarregado) {
+        // Ataque carregado desligado: o bot só bate leve, pelo caminho que já
+        // paga o cooldown (`attack()` + `_attackCooldown`).
+        if (!CHARGED_ATTACK_ENABLED) return false;
+
         if (!alcancaCarregado) return false;
 
         const finaliza = target.currentHealth > DAMAGE_NORMAL

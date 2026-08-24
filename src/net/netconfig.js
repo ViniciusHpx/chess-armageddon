@@ -41,6 +41,30 @@ export function resolveJoinChoice() {
     return joinChoice;
 }
 
+/**
+ * Recarrega a página já entrando numa sala específica.
+ *
+ * Reaproveita o `?room=` que já existe: o `main.js` vê o parâmetro, pula o
+ * lobby (e a tela de nome, que fica no `sessionStorage`) e a `Arena` conecta
+ * direto. Recarregar em vez de reiniciar a cena é o que o jogo já pede em
+ * todos os outros pontos de troca de sala, e não deixa resto de conexão,
+ * sprite ou listener da partida anterior.
+ */
+export function reloadIntoRoom(roomId) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", roomId);
+    window.location.assign(url.toString());
+}
+
+/** Recarrega caindo no lobby: é o fluxo normal de entrada do `main.js`. */
+export function reloadIntoLobby() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    // Sem `?room=` o endereço já era este: aí o que resta é recarregar.
+    if (url.toString() === window.location.href) window.location.reload();
+    else window.location.assign(url.toString());
+}
+
 export function resolveEndpoint() {
     const fromQuery = new URLSearchParams(window.location.search).get("server");
     if (fromQuery) return fromQuery;

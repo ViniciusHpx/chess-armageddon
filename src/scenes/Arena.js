@@ -1,15 +1,19 @@
 import ArenaActor from '../entities/ArenaActor.js';
 import InputManager from '../utils/InputManager.js';
 import DeathScreen from '../ui/DeathScreen.js';
+import ResultScreen from '../ui/ResultScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
 import {
     movementFactor, attackRecoveryMs, attackWindupMs, chargePower,
-    DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
-    RANKS, RANK_ORDER, TEAM_ORDER
+    CHARGED_ATTACK_ENABLED, DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
+    GAME_MODES, RANKS, RANK_ORDER, TEAM_KILL_LIMIT, TEAM_ORDER
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
-import { ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice } from '../net/netconfig.js';
+import {
+    ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice,
+    reloadIntoLobby, reloadIntoRoom
+} from '../net/netconfig.js';
 import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 import MapCollider from '../utils/MapCollider.js';
 
@@ -167,8 +171,14 @@ export class Arena extends Phaser.Scene {
 
         this.showHitboxes = false;
 
+        // Revanche aceita por este jogador. A sala nova quem cria é o
+        // servidor (uma só por partida); aqui só se espera o id aparecer no
+        // estado para entrar nela.
+        this.wantRematch = false;
+
         this.inputs = new InputManager(this);
         this.deathScreen = new DeathScreen(this);
+        this.resultScreen = new ResultScreen(this);
         this.scoreboard = new Scoreboard(this, () => this.scoreRows());
         // XP vem do estado do servidor; enquanto o primeiro patch não chega
         // (ou o campo ainda não mudou de valor), vale 0.
@@ -250,6 +260,17 @@ export class Arena extends Phaser.Scene {
             .setDepth(9000);
 
         this.killFeedLines = [];
+
+        // Placar dos times. Só aparece nos modos com condição de vitória —
+        // hoje o `team_deathmatch` —, senão seria um número sem meta.
+        this.teamScoreText = this.add.text(this.cameras.main.width / 2, 16, '', {
+            ...style,
+            fontSize: '20px',
+            align: 'center'
+        })
+            .setOrigin(0.5, 0)
+            .setScrollFactor(0)
+            .setDepth(9000);
     }
 
     // -----------------------------------------------------------------------
@@ -379,9 +400,14 @@ export class Arena extends Phaser.Scene {
         const localState = this.localState();
 
         if (localState) {
-            this.sendInput(localState, now);
-            this.stepPrediction(localState, delta);
-            this.updateDeathScreen(localState);
+            // Partida decidida: o servidor congelou a simulação, então mandar
+            // entrada e prever só criaria divergência para reconciliar depois.
+            if (this.matchWinner() < 0) {
+                this.sendInput(localState, now);
+                this.stepPrediction(localState, delta);
+                this.updateDeathScreen(localState);
+            }
+            this.updateMatchEnd(localState);
         }
 
         for (const [key, actor] of this.actors) {
@@ -396,6 +422,7 @@ export class Arena extends Phaser.Scene {
 
         this.inputs.setDashCooldown(this.dashCooldownRatio(localState));
         this.xpBar.update(time);
+        this.updateTeamScore();
 
         this.followLocalActor();
         this.scoreboard.update(time);
@@ -459,9 +486,21 @@ export class Arena extends Phaser.Scene {
         const attack = this.inputs.getAttackState();
 
         if (attack.justPressed && localState.alive && this.time.now >= this.localAttackReadyAt) {
-            this.localCharging = true;
-            this.localChargeStart = this.time.now;
             this.room.send('a', 1);
+
+            if (CHARGED_ATTACK_ENABLED) {
+                this.localCharging = true;
+                this.localChargeStart = this.time.now;
+            } else {
+                // Sem ataque carregado o servidor já solta o golpe leve no
+                // aperto (`World.startCharge`); a previsão precisa desacelerar
+                // no mesmo instante, senão a reconciliação desfaz o trecho
+                // andado a mais — o passo para trás a cada golpe.
+                this.localAttackPending = true;
+                this.localAttackSentAt = this.time.now;
+                this.localAttackReadyAt = this.time.now
+                    + attackWindupMs(0) + attackRecoveryMs(0);
+            }
         }
 
         const dash = this.inputs.getDashState();
@@ -779,5 +818,107 @@ export class Arena extends Phaser.Scene {
         } else if (this.deathScreen.isVisible) {
             this.deathScreen.hide();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // FIM DE PARTIDA E REVANCHE
+    // -----------------------------------------------------------------------
+
+    /**
+     * Campo do estado, com o padrão de quando ele ainda não chegou.
+     *
+     * Com a reflection do schema, valor igual ao padrão nunca vira patch e o
+     * campo fica `undefined` no cliente até mudar a primeira vez (é o mesmo
+     * cuidado de `dashCd`).
+     */
+    matchField(nome, padrao) {
+        const valor = this.room && this.room.state ? this.room.state[nome] : undefined;
+        return valor === undefined || valor === null ? padrao : valor;
+    }
+
+    /** Índice do time vencedor em `TEAM_ORDER`, ou -1 com a partida em curso. */
+    matchWinner() {
+        return this.matchField('winner', -1);
+    }
+
+    /** Placar no HUD, só nos modos que têm condição de vitória. */
+    updateTeamScore() {
+        const modo = GAME_MODES[this.matchField('mode', 0)];
+        if (modo !== 'team_deathmatch') {
+            if (this.teamScoreText.text) this.teamScoreText.setText('');
+            return;
+        }
+
+        const ally = this.matchField('scoreAlly', 0);
+        const enemy = this.matchField('scoreEnemy', 0);
+        // O time do jogador local sempre à esquerda: o placar é lido do ponto
+        // de vista de quem joga, como o resto da interface.
+        const meu = this.localTeam === 1 ? enemy : ally;
+        const outro = this.localTeam === 1 ? ally : enemy;
+
+        this.teamScoreText.setText(`SEU TIME ${meu}  x  ${outro} INIMIGOS   (até ${TEAM_KILL_LIMIT})`);
+    }
+
+    /**
+     * Mostra o resultado quando o servidor declara um vencedor, e leva à
+     * revanche assim que a sala nova existir.
+     *
+     * Quem decide vencedor, placar e sala da revanche é sempre o servidor:
+     * aqui só se desenha o que chega no estado e se pede (`"rm"`).
+     */
+    updateMatchEnd(localState) {
+        const winner = this.matchWinner();
+        if (winner < 0) {
+            if (this.resultScreen.isVisible) this.resultScreen.hide();
+            return;
+        }
+
+        if (!this.resultScreen.isVisible) {
+            this.deathScreen.hide();
+            // Solta o que estiver apertado antes de congelar a tela: sem isto
+            // uma carga em curso ficaria pendurada no servidor.
+            this.haltInput();
+
+            const ally = this.matchField('scoreAlly', 0);
+            const enemy = this.matchField('scoreEnemy', 0);
+            const meu = localState.team === 1 ? enemy : ally;
+            const outro = localState.team === 1 ? ally : enemy;
+
+            this.resultScreen.show({
+                won: winner === localState.team,
+                score: `${meu}  x  ${outro}`,
+                onRematch: () => this.acceptRematch(),
+                onMenu: () => reloadIntoLobby()
+            });
+        }
+
+        if (this.wantRematch) this.enterRematchWhenReady();
+    }
+
+    /**
+     * Aceita a revanche.
+     *
+     * O pedido é sempre o mesmo (`"rm"`), tenha alguém aceitado antes ou não:
+     * o servidor cria a sala UMA vez e publica o id em `rematchRoomId`. Dois
+     * jogadores clicando ao mesmo tempo caem na mesma sala — não há decisão
+     * nenhuma deste lado.
+     */
+    acceptRematch() {
+        if (this.wantRematch || !this.room) return;
+
+        this.wantRematch = true;
+        // O MENU continua clicável de propósito: se a sala nova demorar (ou
+        // falhar), ninguém fica preso na tela de resultado.
+        this.resultScreen.setStatus('Entrando na revanche...');
+        this.room.send('rm');
+    }
+
+    /** Entra na sala da revanche assim que o servidor publicar o id dela. */
+    enterRematchWhenReady() {
+        const roomId = this.matchField('rematchRoomId', '');
+        if (!roomId) return;
+
+        this.wantRematch = false;
+        reloadIntoRoom(roomId);
     }
 }

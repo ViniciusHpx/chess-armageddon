@@ -1,5 +1,5 @@
 import PlayerBase from './PlayerBase.js';
-import { movementFactor, RANKS } from '../constants/Hierarchy.js';
+import { CHARGED_ATTACK_ENABLED, movementFactor, RANKS } from '../constants/Hierarchy.js';
 
 export default class HumanPlayer extends PlayerBase {
     constructor(scene, x, y) {
@@ -85,7 +85,10 @@ export default class HumanPlayer extends PlayerBase {
 
         // Entrada de ataque
         if (attackState.justPressed) {
-            this.startCharging();
+            // Com o ataque carregado desligado o aperto já sai como golpe leve;
+            // o `justReleased` abaixo não acha carga nenhuma e não faz nada.
+            if (CHARGED_ATTACK_ENABLED) this.startCharging();
+            else this.attackLight(this.scene.enemyPlayers);
         }
         if (attackState.justReleased) {
             this.releaseCharge(this.scene.enemyPlayers);

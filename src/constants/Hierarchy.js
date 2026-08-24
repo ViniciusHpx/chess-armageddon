@@ -60,6 +60,19 @@ export const DEFAULT_GAME_MODE = 'team_deathmatch';
 // Mudar aqui sem mudar lá faz o cliente desenhar um golpe do tamanho errado.
 // ---------------------------------------------------------------------------
 
+/**
+ * TEMPORÁRIO: ataque carregado desligado (espelha `CHARGED_ATTACK_ENABLED` do
+ * servidor — as duas precisam ter o mesmo valor).
+ *
+ * Com `false`, apertar o botão já dispara o golpe leve e ninguém entra em
+ * estado de carga. Nada da máquina de carga foi removido: voltar a flag para
+ * `true` nos dois lados devolve o comportamento.
+ */
+export const CHARGED_ATTACK_ENABLED = false;
+
+/** Abates que decidem uma partida de `team_deathmatch` (espelha o servidor). */
+export const TEAM_KILL_LIMIT = 40;
+
 export const DAMAGE_LIGHT = 25;
 export const DAMAGE_MAX = 50;
 export const DAMAGE_CHARGE_EXP = 1.6;

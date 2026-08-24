@@ -899,6 +899,22 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.performAttack(enemyGroup);
     }
 
+    /**
+     * Golpe leve imediato, sem passar por estado de carga.
+     *
+     * É a própria máquina de carga aberta e fechada no mesmo quadro: o tempo
+     * decorrido é zero, então `releaseCharge` sai com potência 0 — o mesmo
+     * golpe de um toque rápido. Serve ao ataque carregado desligado
+     * (`CHARGED_ATTACK_ENABLED`) sem duplicar a checagem de recuperação nem a
+     * chamada de `performAttack`.
+     *
+     * @param {Phaser.GameObjects.Group} enemyGroup Alvos do golpe.
+     */
+    attackLight(enemyGroup) {
+        this.startCharging();
+        this.releaseCharge(enemyGroup);
+    }
+
     /** Abandona a carga sem golpe nenhum. */
     cancelCharge() {
         this._isCharging = false;
