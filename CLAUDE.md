@@ -241,12 +241,23 @@ tudo-ou-nada e parava o personagem a um passo da parede; o bot então empurrava 
 vazio sem sair do lugar. A posição inválida **nunca é aceita** — não existe
 "andou e voltou", que produziria teleporte e jitter.
 
+**A correção da reconciliação também passa pela colisão** (`Arena.stepPrediction`).
+Aplicada crua, ela empurrava a previsão frações de pixel para dentro da parede;
+o resgate abaixo jogava o boneco para fora, a entrada trazia de volta, e o
+resultado era o personagem **tremendo parado** contra o obstáculo. Medido antes:
+45,8 px de amplitude e 7,6 px de erro contra o servidor; depois: 0,02 px e zero
+inversões de sentido.
+
 **Partida inválida tem resgate.** Se o ponto de origem já está dentro da parede
 (separação entre personagens, empurrão de golpe, clamp da borda), a bisseção
 partiria de um ponto ruim e o personagem *deslizaria dentro* da muralha, preso
 para sempre. `nearestFree` procura o ponto livre mais próximo numa espiral curta
-(até 96 px) e devolve o personagem para lá. É um empurrão de poucos pixels em
-estado já quebrado — não é o caminho normal de movimento.
+(até 96 px, em passos de **2 px**) e devolve o personagem para lá. É um empurrão
+de poucos pixels em estado já quebrado — não é o caminho normal de movimento.
+
+O passo fino importa: com 8 px o resgate saltava para longe da parede, o
+movimento empurrava de volta e ele disparava outra vez — a metade do ciclo de
+tremor descrito acima.
 
 No servidor o `tick` ficou: mover com colisão → separar personagens → clamp da
 borda → **revalidar**. A revalidação existe porque a separação e o clamp podem

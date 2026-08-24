@@ -666,13 +666,10 @@ export class Arena extends Phaser.Scene {
         // destino, desliza em X, desliza em Y, senão fica. O dash também passa
         // por aqui — impulso não é licença para atravessar muralha.
         if (this.mapCollider) {
-            const rank = RANKS[RANK_ORDER[localState.rank]];
-            const rx = 50 * (rank.size.width / 128);
-            const ry = 25 * (rank.size.height / 128);
-            const offsetY = rank.size.height / 2 - rx + (ry * 4) / 3;
-
+            const forma = this.formaLocal(localState);
             const resolvido = this.mapCollider.resolveMove(
-                antesColisaoX, antesColisaoY, this.predX, this.predY, offsetY, rx, ry
+                antesColisaoX, antesColisaoY, this.predX, this.predY,
+                forma.offsetY, forma.rx, forma.ry
             );
             this.predX = resolvido.x;
             this.predY = resolvido.y;
@@ -730,8 +727,39 @@ export class Arena extends Phaser.Scene {
         if (emDash) return;
 
         const t = Math.min(1, RECONCILE_RATE * dt);
-        this.predX += errorX * t;
-        this.predY += errorY * t;
+        const corrigidoX = this.predX + errorX * t;
+        const corrigidoY = this.predY + errorY * t;
+
+        // A correção também passa pela colisão. Ela é um movimento como
+        // qualquer outro: aplicada crua, empurrava a previsão frações de pixel
+        // para dentro da parede, o resgate a jogava para fora e a entrada a
+        // trazia de volta — o personagem tremia parado contra o obstáculo.
+        if (this.mapCollider) {
+            const forma = this.formaLocal(localState);
+            const ajustado = this.mapCollider.resolveMove(
+                this.predX, this.predY, corrigidoX, corrigidoY,
+                forma.offsetY, forma.rx, forma.ry
+            );
+            this.predX = ajustado.x;
+            this.predY = ajustado.y;
+        } else {
+            this.predX = corrigidoX;
+            this.predY = corrigidoY;
+        }
+    }
+
+    /**
+     * Elipse de colisão do rank atual do jogador local.
+     *
+     * Mesma geometria do servidor (`Actor.collisionRx/Ry` e `ellipseCenter`),
+     * derivada do rank em vez de lida do corpo Arcade — a `Arena` não tem
+     * física, e este é o formato que a colisão do mapa espera.
+     */
+    formaLocal(localState) {
+        const rank = RANKS[RANK_ORDER[localState.rank]];
+        const rx = 50 * (rank.size.width / 128);
+        const ry = 25 * (rank.size.height / 128);
+        return { rx, ry, offsetY: rank.size.height / 2 - rx + (ry * 4) / 3 };
     }
 
     /**

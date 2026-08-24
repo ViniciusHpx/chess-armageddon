@@ -106,9 +106,14 @@ export default class MapCollider {
      * Rede de resgate para quando a posição de PARTIDA já é inválida (empurrão,
      * separação entre personagens, clamp da borda). Sem isto a bisseção parte de
      * um ponto ruim e o personagem desliza DENTRO da parede, preso.
+     *
+     * O passo é fino (2 px) de propósito: o resgate tem de devolver o corpo
+     * para FORA da parede pelo caminho mais curto. Com passo grosso ele saltava
+     * vários pixels, o movimento empurrava de volta contra a parede e o resgate
+     * disparava de novo — o tremor que se via ao encostar num obstáculo.
      */
     nearestFree(x, y, offsetY, rx, ry) {
-        for (let raio = 8; raio <= 96; raio += 8) {
+        for (let raio = 2; raio <= 96; raio += 2) {
             for (let i = 0; i < 8; i++) {
                 const ang = (i / 8) * Math.PI * 2;
                 const px = x + Math.cos(ang) * raio;
