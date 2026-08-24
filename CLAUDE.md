@@ -193,7 +193,7 @@ No online nada disso está no cliente: o `World` do servidor integra o empurrão
 ### Mapa e colisão com o cenário
 
 **Dimensões: 4992 × 1684.** Os assets (`assets/arena.png` e
-`assets/collision.png`) são a **metade esquerda**, 2496 × 1684; o mundo é essa
+`assets/arena_collision.png`) são a **metade esquerda**, 2496 × 1684; o mundo é essa
 metade mais o espelho dela em X. Daí `WORLD_WIDTH = HALF_WORLD_WIDTH * 2`, e o
 mesmo espelhamento vale para o desenho (duas imagens, a segunda com `flipX`) e
 para a máscara (`px >= halfWidth → width - 1 - px`).
@@ -220,7 +220,7 @@ consultados por índice. Nenhum tick abre arquivo, decodifica imagem ou varre o
 mapa.
 
 **Deploy.** A arte é do cliente, mas a cópia em
-`chess-armageddon-server/assets/collision.png` é **versionada** (28 KB) — cliente
+`chess-armageddon-server/assets/arena_collision.png` é **versionada** (28 KB) — cliente
 e servidor têm deploys separados e, no host do servidor, a pasta do cliente não
 existe. Ao mudar a arte de colisão, rode `npm run sync:mask` no servidor e
 commite a cópia. `COLLISION_MASK_PATH` sobrescreve o caminho se preciso.
@@ -491,7 +491,7 @@ Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o 
 
 ## Pendências conhecidas
 
-- Assets antigos (`map*.png`, `map_collision*.png`) continuam na pasta sem uso — o mapa em vigor é `arena.png` + `collision.png`.
+- Assets antigos (`map*.png`, `map_collision*.png`) continuam na pasta sem uso — o mapa em vigor é `arena.png` + `arena_collision.png`.
 - A hitbox de debug é sempre desenhada (não há flag para desligar).
 
 ## Modo online (cena `Arena`)
