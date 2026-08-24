@@ -79,6 +79,61 @@ Cada peça existe em duas artes: `assets/<peça>_<tamanho>.png` (clara) e `asset
 
 A cor vem do time **absoluto**, nunca de `isOpponent`. `isOpponent` é relativo a quem olha: usá-lo pintaria a mesma peça de cores diferentes em cada tela. O relativo sobrou só na moldura de debug (`applyDebugColor()`: amarelo eu, verde meu time, vermelho o adversário).
 
+### Navegação dos bots
+
+Antes o bot mirava o inimigo em linha reta. Com rio e muralha no mapa isso
+significava encostar na parede e ficar empurrando: medido, 10 bots percorriam
+117 px somados em 20 s, com 14 px de progresso líquido, e **nenhum** chegava a
+um inimigo. A oscilação contra a parede também chegava ao cliente como
+tremedeira — o que parecia "lag" era isso.
+
+`NavGrid.ts` (servidor) resolve com um grid derivado da **mesma máscara de
+colisão**: célula de 32 px, 156 × 53 = 8268 células, montado uma vez na subida
+junto com os componentes conexos. A ponte tem ~96 px livres (3 células) — com
+64 px ela sumiria do grid, e é justamente a travessia que o bot precisa achar.
+Não existe regra de "rio" ou "ponte": a ponte é célula caminhável como
+qualquer outra.
+
+As células usam os raios da **rainha** (a maior peça): rota aprovada ali serve
+para qualquer rank.
+
+**O A* quase nunca roda.** A ordem em `World.navigateAngle` é do mais barato ao
+mais caro:
+
+1. **linha de visão livre** → vai direto e descarta a rota (caso comum);
+2. **rota em andamento** → segue o waypoint;
+3. **sem rota** → pede A*, respeitando `BOT_REPATH_MIN_MS` (700 ms por bot),
+   `BOT_PATHS_PER_TICK` (2 na sala inteira) e a consulta O(1) de componentes,
+   que descarta alvos inalcançáveis sem busca nenhuma.
+
+O caminho é recalculado por **evento**: rota acabou, o alvo andou mais que
+`BOT_REPATH_TARGET_MOVE` (220 px), ou o bot travou.
+
+**Bot travado**: a cada `BOT_STUCK_CHECK_MS` (600 ms) compara-se o quanto ele
+andou; abaixo de `BOT_STUCK_MIN_PROGRESS` (24 px) a rota é descartada e o
+recálculo liberado na hora. É isso que tira o bot da margem e o manda à ponte.
+
+Só limpar a rota não resolve **quina**: o A* devolve praticamente o mesmo
+caminho e ele reencalha no mesmo canto. Por isso a travada também liga o
+contorno (`BOT_UNSTICK_MS`, 500 ms), em que o bot ignora o waypoint e anda numa
+tangente de ~70° (`BOT_UNSTICK_ANGLE`) — e **alterna o lado** a cada travada, em
+vez de insistir no mesmo. É movimento normal, sem teleporte.
+
+A rota sai **suavizada**: pontos que dá para pular em linha reta são
+descartados, senão o bot andaria em escadinha de 32 px trocando de direção o
+tempo todo. Cuidado ao mexer em `suaviza()` — a primeira versão entrava em
+laço infinito quando nem o primeiro ponto tinha linha de visão, e derrubava o
+processo com "invalid size error".
+
+O movimento em si não mudou: o waypoint vira um ângulo e o resto é o mesmo
+`vx/vy`, com a mesma colisão e a mesma velocidade — a separação entre
+personagens continua cuidando de vários bots na mesma ponte.
+
+**Custo medido**: tick médio 0,10 ms com 10–20 bots e 0,21 ms com 40, dos 50 ms
+de orçamento. Em 30 s, nenhum bot fica quase parado e nenhum termina dentro de
+parede. Tráfego: **1,5 KB/s por cliente**, 96 B por patch — nem CPU nem rede são
+gargalo aqui.
+
 ### Placar e IA dos bots
 
 **Placar.** [Scoreboard.js](src/ui/Scoreboard.js) é usado pelos dois modos e não sabe de onde vêm os dados: recebe uma função que devolve linhas `{name, team, kills, deaths, isLocal}`. Cada cena tem seu adaptador — `Arena.scoreRows()` lê o schema do servidor, `Start.scoreRows()` varre os grupos de sprites. Só monta a string com o painel aberto, e no máximo a cada 200 ms.
@@ -135,6 +190,103 @@ No online nada disso está no cliente: o `World` do servidor integra o empurrão
 
 `mass` controla só o empurrão entre personagens (ver abaixo); é lida via `getCollisionMass()` e não tem relação com `body.mass` do Arcade.
 
+### Mapa e colisão com o cenário
+
+**Dimensões: 4992 × 1684.** Os assets (`assets/arena.png` e
+`assets/collision.png`) são a **metade esquerda**, 2496 × 1684; o mundo é essa
+metade mais o espelho dela em X. Daí `WORLD_WIDTH = HALF_WORLD_WIDTH * 2`, e o
+mesmo espelhamento vale para o desenho (duas imagens, a segunda com `flipX`) e
+para a máscara (`px >= halfWidth → width - 1 - px`).
+
+As dimensões vivem em [Scenario.js](src/constants/Scenario.js) (cliente) e em
+`constants.ts` (servidor). Nada de número solto: `Hierarchy.js` chegou a ter uma
+segunda cópia de `WORLD_WIDTH` e a `Arena` importava justamente a que já não
+existia mais — os clamps viravam `NaN`.
+
+**A máscara é a mesma imagem nos dois lados.** Livre = canal vermelho > 128 (o
+limiar perdoa o anti-aliasing da borda). **Nove pontos por teste** — centro,
+quatro pontas e quatro diagonais da elipse, a 70% dos raios. As diagonais não
+são luxo: com só as pontas, uma quina entra pelo vão entre elas e o ombro do
+corpo termina dentro da pedra.
+
+| Onde | O quê |
+| --- | --- |
+| [MapCollider.js](src/utils/MapCollider.js) | cliente: lê os pixels via `<canvas>` |
+| `sim/CollisionMask.ts` | servidor: decodifica o PNG uma vez (pngjs) e vira bitset |
+
+No servidor a decodificação acontece **uma vez por processo** (`World` guarda a
+máscara num módulo compartilhado): ~512 KB de bits para os 2496×1684 da metade,
+consultados por índice. Nenhum tick abre arquivo, decodifica imagem ou varre o
+mapa.
+
+**Deploy.** A arte é do cliente, mas a cópia em
+`chess-armageddon-server/assets/collision.png` é **versionada** (28 KB) — cliente
+e servidor têm deploys separados e, no host do servidor, a pasta do cliente não
+existe. Ao mudar a arte de colisão, rode `npm run sync:mask` no servidor e
+commite a cópia. `COLLISION_MASK_PATH` sobrescreve o caminho se preciso.
+
+A máscara é carregada em `app.config.ts`, **antes de o servidor aceitar
+conexões**: faltando o arquivo (ou com tamanho diferente do esperado) ele não
+sobe, e o log diz onde procurou. Carregar isso na primeira sala, como era antes,
+produzia um sintoma enganoso: `/health` respondia 200, `POST
+/matchmake/create/arena` devolvia 523 e o navegador acusava **CORS** — porque a
+página de erro da borda não traz `Access-Control-Allow-Origin`. O CORS em si o
+Colyseus já resolve sozinho.
+
+**Resolução do movimento** (`resolveMove`, idêntica nos dois lados): três
+candidatos — seguir na diagonal, deslizar em X, deslizar em Y —, cada um levado
+até **encostar** por bisseção (`maxAlong`, 4 cortes: para a menos de 1 px da
+parede). Vence o que rende mais deslocamento. A versão anterior era
+tudo-ou-nada e parava o personagem a um passo da parede; o bot então empurrava o
+vazio sem sair do lugar. A posição inválida **nunca é aceita** — não existe
+"andou e voltou", que produziria teleporte e jitter.
+
+**A correção da reconciliação também passa pela colisão** (`Arena.stepPrediction`).
+Aplicada crua, ela empurrava a previsão frações de pixel para dentro da parede;
+o resgate abaixo jogava o boneco para fora, a entrada trazia de volta, e o
+resultado era o personagem **tremendo parado** contra o obstáculo. Medido antes:
+45,8 px de amplitude e 7,6 px de erro contra o servidor; depois: 0,02 px e zero
+inversões de sentido.
+
+**Partida inválida tem resgate.** Se o ponto de origem já está dentro da parede
+(separação entre personagens, empurrão de golpe, clamp da borda), a bisseção
+partiria de um ponto ruim e o personagem *deslizaria dentro* da muralha, preso
+para sempre. `nearestFree` procura o ponto livre mais próximo numa espiral curta
+(até 96 px, em passos de **2 px**) e devolve o personagem para lá. É um empurrão
+de poucos pixels em estado já quebrado — não é o caminho normal de movimento.
+
+O passo fino importa: com 8 px o resgate saltava para longe da parede, o
+movimento empurrava de volta e ele disparava outra vez — a metade do ciclo de
+tremor descrito acima.
+
+No servidor o `tick` ficou: mover com colisão → separar personagens → clamp da
+borda → **revalidar**. A revalidação existe porque a separação e o clamp podem
+empurrar alguém para dentro da muralha; nesse caso o ator volta para
+`lastValidX/Y`. `Actor.teleport()` é o jeito de reposicionar sem brigar com essa
+rede (spawn, respawn, testes).
+
+**A previsão do cliente online usa a mesma máscara** ([Arena.js](src/scenes/Arena.js)).
+Sem isso o boneco entraria na parede localmente e a reconciliação o arrancaria de
+volta a cada quadro. Medido contra a muralha oeste: o erro entre previsão e
+servidor cai de 89 px para 1 px e os dois param no mesmo pixel.
+
+### Spawn
+
+Cada time nasce **no próprio castelo**: `SPAWN_ZONE` (retângulo do pátio,
+espelhado em X para o time `enemy`) está em `constants.ts` e em
+[Scenario.js](src/constants/Scenario.js).
+
+O retângulo é generoso de propósito — o pátio tem construções internas, e quem
+garante chão livre é a máscara. `World.placeAtSpawn` (online) e
+`PlayerBase.moveToSpawn` (offline) sorteiam dentro da zona e validam: dentro do
+mapa, fora de parede e — no servidor — a pelo menos `SPAWN_MIN_DISTANCE` de quem
+já está lá. É rejection sampling com teto de tentativas (`SPAWN_ATTEMPTS`), sem
+varrer o mapa e sem laço infinito quando o castelo enche.
+
+Uma pegadinha: no spawn o offset até o centro da elipse tem de sair da geometria
+do rank, **não** de `getEllipseCenter()` — aquele lê `body.center`, que só
+sincroniza no `preUpdate` seguinte, e a validação testaria o pixel errado.
+
 ### Colisão entre personagens
 
 **Não existe `physics.add.collider` entre os personagens** — o corpo Arcade é um retângulo que apenas circunscreve a elipse real, o que causava colisão fantasma nos cantos e separação axis-aligned (personagens enganchando). A separação é feita em [CollisionResolver.js](src/utils/CollisionResolver.js), chamado no `postupdate`.
@@ -185,6 +337,20 @@ Contra um alvo só, a invulnerabilidade de 500 ms (`HIT_INVULN_MS`) limita os
 dois, e o leve rende mais dano por segundo. O carregado paga por: alcance
 dobrado (pega quem está fugindo), empurrão que cria espaço, e matar em dois
 golpes em vez de quatro.
+
+**Carregar deixa lento.** Enquanto a carga está em curso o personagem anda a
+`CHARGE_MOVE_FACTOR` (0,45) da velocidade — mais devagar que durante o próprio
+golpe (0,6). Segurar a carga passa a custar posicionamento, não só tempo. Quem
+decide o fator é `movementFactor(attacking, charging)`, definida no servidor e
+espelhada em [Hierarchy.js](src/constants/Hierarchy.js): é a **única** fonte do
+fator, usada pelo `stepPlayer`/`stepBot`, pela previsão da `Arena` e pelo modo
+offline. Nada de recalcular velocidade solto em cada lugar — foi assim que
+previsão e simulação ficaram idênticas (erro medido de 0,05 px enquanto carrega).
+
+O estado que vale é o do servidor: o cliente só manda *apertei*/*soltei*, e a
+lentidão sai do `charging` do próprio `Actor`. Soltar, cancelar (dash, morte) ou
+ter a carga recusada devolve a velocidade no mesmo tick, porque o fator é lido
+do estado — não existe timer paralelo para dessincronizar.
 
 **Recuperação (`attackRecoveryMs`)** é nova e vale para humanos e bots: antes o
 humano não tinha cooldown nenhum e segurar o botão rendia golpe atrás de golpe.
@@ -325,8 +491,7 @@ Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o 
 
 ## Pendências conhecidas
 
-- `assets/map_collision_3548_1774.png` é pré-carregado como `'collision_map'` mas **nunca usado** — colisão com o cenário ainda não foi implementada.
-- Dimensões do mapa (3548×1774) estão hardcoded em `Start.create()`.
+- Assets antigos (`map*.png`, `map_collision*.png`) continuam na pasta sem uso — o mapa em vigor é `arena.png` + `collision.png`.
 - A hitbox de debug é sempre desenhada (não há flag para desligar).
 
 ## Modo online (cena `Arena`)
@@ -369,6 +534,21 @@ vale igual para o lobby.
 `app.config.ts`), que empurra `rooms`, `+` e `-`. Quem dispara a atualização é a
 própria `ArenaRoom`, chamando `updateLobby()` ao criar, ao alguém entrar e ao
 alguém sair.
+
+**Modo de jogo.** Quem cria escolhe entre `team_deathmatch`, `capture_the_flag` e
+`free_for_all` (`GAME_MODES`). Hoje o modo é só um **rótulo**: nenhuma regra
+depende dele ainda. Ele existe para a escolha ficar registrada, aparecer no
+lobby e dar onde pendurar as regras depois.
+
+- validado no servidor por allowlist (`sanitizeGameMode`); qualquer outra coisa
+  — string arbitrária, número, objeto, ausente — vira `DEFAULT_GAME_MODE`
+  (`team_deathmatch`, que é o comportamento que o jogo já tem), então cliente
+  antigo e sala antiga continuam funcionando;
+- vai para a `metadata` (o lobby mostra antes de entrar) e para
+  `ArenaState.mode` como **índice** em `GAME_MODES`, no mesmo padrão de `rank` e
+  `team` — a ordem da lista é contrato de rede, modo novo entra no fim;
+- é escrito uma vez, na criação, e só pelo servidor. Não há mensagem para o
+  cliente trocar o modo de uma sala.
 
 **Slots.** Cada time tem `TEAM_SIZE` (5) slots. Quem cria escolhe quantos
 nascem bot; o resto fica vazio. Entrando um humano: **slot vazio primeiro**, e

@@ -1,5 +1,5 @@
 import PlayerBase from './PlayerBase.js';
-import { ATTACK_MOVE_FACTOR, RANKS } from '../constants/Hierarchy.js';
+import { movementFactor, RANKS } from '../constants/Hierarchy.js';
 
 export default class HumanPlayer extends PlayerBase {
     constructor(scene, x, y) {
@@ -54,7 +54,7 @@ export default class HumanPlayer extends PlayerBase {
     respawn() {
         this.resetProgressOnDeath();
 
-        this.setPosition(640, 360);
+        this.moveToSpawn(this.scene.mapCollider, 640, 360);
         this.setVelocity(0, 0);
 
         this.setActive(true);
@@ -106,7 +106,7 @@ export default class HumanPlayer extends PlayerBase {
             this.setVelocity(dash.vx, dash.vy);
         } else {
             const speed = this._currentRank.speed *
-                (this._isAttacking ? ATTACK_MOVE_FACTOR : 1);
+                movementFactor(this._isAttacking, this._isCharging);
 
             this.setVelocity(dx * speed, dy * speed);
 

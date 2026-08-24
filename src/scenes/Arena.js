@@ -4,13 +4,14 @@ import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
 import {
-    ATTACK_MOVE_FACTOR, attackRecoveryMs, attackWindupMs, chargePower,
+    movementFactor, attackRecoveryMs, attackWindupMs, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, RANK_ORDER, TEAM_ORDER
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice } from '../net/netconfig.js';
-import { ARENA_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
+import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
+import MapCollider from '../utils/MapCollider.js';
 
 /**
  * Cena multiplayer. Toda a regra do jogo mora em `chess-armageddon-server`;
@@ -92,10 +93,18 @@ export class Arena extends Phaser.Scene {
         this.load.spritesheet('horse_black', 'assets/horse_144_b.png', { frameWidth: 144, frameHeight: 144 });
         this.load.spritesheet('bishop_black', 'assets/bishop_144_b.png', { frameWidth: 144, frameHeight: 144 });
         this.load.spritesheet('queen_black', 'assets/queen_160_b.png', { frameWidth: 160, frameHeight: 160 });
+
+        // Máscara de colisão. O servidor é a autoridade sobre a posição; esta
+        // cópia serve só para a PREVISÃO local respeitar as mesmas paredes —
+        // sem ela o boneco entraria na muralha e a reconciliação o arrancaria
+        // de volta a cada quadro.
+        this.load.image('collision_map', COLLISION_PATH);
     }
 
     create() {
         this.createAuraTexture();
+
+        this.mapCollider = new MapCollider(this, 'collision_map');
 
         this.add.image(0, 0, 'grass').setOrigin(0, 0);
         this.add.image(HALF_WORLD_WIDTH, 0, 'grass').setOrigin(0, 0).setFlipX(true);
@@ -261,7 +270,9 @@ export class Arena extends Phaser.Scene {
             if (escolha && escolha.roomId) {
                 this.room = await client.joinById(escolha.roomId, { name });
             } else if (escolha && escolha.create) {
-                this.room = await client.create(ROOM_NAME, { name, bots: escolha.bots });
+                this.room = await client.create(ROOM_NAME, {
+                    name, bots: escolha.bots, mode: escolha.mode,
+                });
             } else {
                 this.room = await client.joinOrCreate(ROOM_NAME, { name });
             }
@@ -624,6 +635,9 @@ export class Arena extends Phaser.Scene {
         const dashLocal = this.time.now < this.localDashUntil && this.localDashRemaining > 0;
         const emDash = dashLocal || localState.dashing;
 
+        const antesColisaoX = this.predX;
+        const antesColisaoY = this.predY;
+
         if (dashLocal) {
             // Dash manda na previsão enquanto dura, como no `stepPlayer` do
             // servidor. A velocidade é limitada pelo que falta percorrer (a
@@ -635,12 +649,13 @@ export class Arena extends Phaser.Scene {
             this.predX += this.localDashDirX * speed * dt;
             this.predY += this.localDashDirY * speed * dt;
         } else {
-            // Golpe em curso: anda devagar, não para. O fator é o mesmo do
-            // servidor; a previsão o aplica desde o ENVIO do ataque, e não desde
-            // a confirmação, senão o RTT vira divergência e a reconciliação puxa
-            // o boneco para trás.
+            // Golpe em curso: anda devagar; carregando, mais devagar ainda. Os
+            // fatores são os mesmos do servidor (`movementFactor`), e a previsão
+            // os aplica desde o ENVIO — não desde a confirmação —, senão o RTT
+            // vira divergência e a reconciliação puxa o boneco para trás.
             const atacando = localState.attacking || this.localAttackPending;
-            const fator = atacando ? ATTACK_MOVE_FACTOR : 1;
+            const carregando = this.localCharging || localState.charging;
+            const fator = movementFactor(atacando, carregando);
             const { dx, dy } = this.inputs.getMovementVector();
             const speed = RANKS[RANK_ORDER[localState.rank]].speed * fator;
             this.predX += dx * speed * dt;
@@ -649,6 +664,19 @@ export class Arena extends Phaser.Scene {
 
         this.predX = Phaser.Math.Clamp(this.predX, halfW, WORLD_WIDTH - halfW);
         this.predY = Phaser.Math.Clamp(this.predY, halfH, WORLD_HEIGHT - halfH);
+
+        // Mesma resolução do servidor (`CollisionMask.resolveMove`): tenta o
+        // destino, desliza em X, desliza em Y, senão fica. O dash também passa
+        // por aqui — impulso não é licença para atravessar muralha.
+        if (this.mapCollider) {
+            const forma = this.formaLocal(localState);
+            const resolvido = this.mapCollider.resolveMove(
+                antesColisaoX, antesColisaoY, this.predX, this.predY,
+                forma.offsetY, forma.rx, forma.ry
+            );
+            this.predX = resolvido.x;
+            this.predY = resolvido.y;
+        }
 
         this.segDx += this.predX - antesX;
         this.segDy += this.predY - antesY;
@@ -702,8 +730,39 @@ export class Arena extends Phaser.Scene {
         if (emDash) return;
 
         const t = Math.min(1, RECONCILE_RATE * dt);
-        this.predX += errorX * t;
-        this.predY += errorY * t;
+        const corrigidoX = this.predX + errorX * t;
+        const corrigidoY = this.predY + errorY * t;
+
+        // A correção também passa pela colisão. Ela é um movimento como
+        // qualquer outro: aplicada crua, empurrava a previsão frações de pixel
+        // para dentro da parede, o resgate a jogava para fora e a entrada a
+        // trazia de volta — o personagem tremia parado contra o obstáculo.
+        if (this.mapCollider) {
+            const forma = this.formaLocal(localState);
+            const ajustado = this.mapCollider.resolveMove(
+                this.predX, this.predY, corrigidoX, corrigidoY,
+                forma.offsetY, forma.rx, forma.ry
+            );
+            this.predX = ajustado.x;
+            this.predY = ajustado.y;
+        } else {
+            this.predX = corrigidoX;
+            this.predY = corrigidoY;
+        }
+    }
+
+    /**
+     * Elipse de colisão do rank atual do jogador local.
+     *
+     * Mesma geometria do servidor (`Actor.collisionRx/Ry` e `ellipseCenter`),
+     * derivada do rank em vez de lida do corpo Arcade — a `Arena` não tem
+     * física, e este é o formato que a colisão do mapa espera.
+     */
+    formaLocal(localState) {
+        const rank = RANKS[RANK_ORDER[localState.rank]];
+        const rx = 50 * (rank.size.width / 128);
+        const ry = 25 * (rank.size.height / 128);
+        return { rx, ry, offsetY: rank.size.height / 2 - rx + (ry * 4) / 3 };
     }
 
     /**

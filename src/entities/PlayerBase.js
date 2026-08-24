@@ -939,18 +939,37 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     // No final da classe PlayerBase...
 
     /** Verifica o centro e as bordas da elipse para o personagem não atravessar paredes */
+    /**
+     * Nasce (ou renasce) no castelo do próprio time, em chão livre.
+     *
+     * Sem colisor não há o que validar: cai na posição de reserva, que é o
+     * comportamento antigo.
+     */
+    moveToSpawn(mapCollider, reservaX, reservaY) {
+        if (!mapCollider) {
+            this.setPosition(reservaX, reservaY);
+        } else {
+            // O offset sai da geometria do rank, não de `getEllipseCenter()`:
+            // aquele lê `body.center`, que só é sincronizado no `preUpdate` do
+            // quadro seguinte — no spawn ele ainda aponta para a posição
+            // anterior e a validação testaria o pixel errado.
+            const offsetY = this.displayHeight / 2 - this.collisionRx + (this.collisionRy * 4) / 3;
+            const ponto = mapCollider.findSpawn(this.team, this.collisionRx, this.collisionRy, offsetY);
+            this.setPosition(ponto.x, ponto.y);
+        }
+
+        if (this.body) this.body.updateFromGameObject();
+        // O deslize compara com a posição do quadro anterior: sem zerar isto, o
+        // personagem seria puxado de volta para onde estava antes de renascer.
+        this._prevX = this.x;
+        this._prevY = this.y;
+    }
+
     isPositionWalkable(mapCollider) {
         if (!mapCollider) return true;
 
         const center = this.getEllipseCenter();
-        const rx = this.collisionRx * 0.7; // Margem menor que 100% para perdoar resvalos
-        const ry = this.collisionRy * 0.7;
-
-        return mapCollider.isWalkable(center.x, center.y) &&
-               mapCollider.isWalkable(center.x + rx, center.y) &&
-               mapCollider.isWalkable(center.x - rx, center.y) &&
-               mapCollider.isWalkable(center.x, center.y + ry) &&
-               mapCollider.isWalkable(center.x, center.y - ry);
+        return mapCollider.canStand(center.x, center.y, this.collisionRx, this.collisionRy);
     }
 
     /** 
@@ -965,23 +984,19 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         let newY = Phaser.Math.Clamp(this.y, bounds.y + halfH, bounds.bottom - halfH);
         this.setPosition(newX, newY);
 
-        // Deslizamento (Sliding) contra pixels pretos
+        // Deslize contra o cenário. A resolução vive no `MapCollider` e é a
+        // MESMA que o servidor usa (`CollisionMask.resolveMove`): tenta a
+        // diagonal, o eixo X e o eixo Y, cada um até encostar, e fica com o que
+        // render mais. Antes isto era um if aninhado aqui dentro que, na quina,
+        // devolvia o personagem para a posição do quadro anterior — ele parava
+        // a um passo da parede e, no caso do bot, ficava empurrando o vazio.
         if (mapCollider && this._prevX !== undefined && this._prevY !== undefined) {
-            if (!this.isPositionWalkable(mapCollider)) {
-                
-                // Bateu. Tenta deslizar mantendo só o eixo X
-                this.setPosition(newX, this._prevY);
-                if (!this.isPositionWalkable(mapCollider)) {
-                    
-                    // Não deu. Tenta deslizar mantendo só o eixo Y
-                    this.setPosition(this._prevX, newY);
-                    if (!this.isPositionWalkable(mapCollider)) {
-                        
-                        // Quina absoluta, volta para onde estava no frame passado
-                        this.setPosition(this._prevX, this._prevY);
-                    }
-                }
-            }
+            const offsetY = this.displayHeight / 2 - this.collisionRx + (this.collisionRy * 4) / 3;
+            const destino = mapCollider.resolveMove(
+                this._prevX, this._prevY, newX, newY,
+                offsetY, this.collisionRx, this.collisionRy
+            );
+            this.setPosition(destino.x, destino.y);
         }
 
         this.body.updateFromGameObject(); // Atualiza a hitbox Arcade

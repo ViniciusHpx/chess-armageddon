@@ -59,6 +59,7 @@ export class Start extends Phaser.Scene {
 
         // Jogador humano (pertence aos aliados)
         this.player = new HumanPlayer(this, 500, 700);
+        this.player.moveToSpawn(this.mapCollider, 500, 700);
         this.player.displayName = 'Você';
         this.alliedPlayers.add(this.player);
 
@@ -118,9 +119,10 @@ export class Start extends Phaser.Scene {
      */
     spawnBots(group, team, count, firstNumber) {
         for (let i = 0; i < count; i++) {
-            const x = Phaser.Math.Between(800, 3000);
-            const y = Phaser.Math.Between(200, 1500);
-            const bot = new AIPlayer(this, x, y, team);
+            // Posição provisória; `moveToSpawn` põe no castelo do time,
+            // validando contra a máscara de colisão.
+            const bot = new AIPlayer(this, 0, 0, team);
+            bot.moveToSpawn(this.mapCollider, 500, 700);
             bot.displayName = `Bot ${firstNumber + i}`;
             group.add(bot);
         }
