@@ -470,6 +470,20 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
+     * O personagem está com o corpo na água?
+     *
+     * Espelha `World.inWater` do servidor: uma consulta no centro da elipse,
+     * sem estado guardado — a cada quadro se olha onde ele está.
+     */
+    isInWater() {
+        const mapCollider = this.scene.mapCollider;
+        if (!mapCollider) return false;
+
+        const centro = this.getEllipseCenter();
+        return mapCollider.isWater(centro.x, centro.y);
+    }
+
+    /**
      * Cura contínua dentro do castelo do PRÓPRIO time — espelha o
      * `World.healInBase` do servidor.
      *

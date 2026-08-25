@@ -28,10 +28,21 @@ export const CHARGE_MOVE_FACTOR = 0.45;
  * Calcular isso solto em cada lugar faria previsão, simulação e modo offline
  * divergirem.
  */
-export function movementFactor(attacking, charging) {
-    if (attacking) return ATTACK_MOVE_FACTOR;
-    if (charging) return CHARGE_MOVE_FACTOR;
-    return 1;
+/**
+ * Fração da velocidade dentro da água (espelha `WATER_SPEED_FACTOR` do
+ * servidor). A água é navegável por todo mundo; só custa 20% de velocidade.
+ */
+export const WATER_SPEED_FACTOR = 0.8;
+
+export function movementFactor(attacking, charging, inWater = false) {
+    let fator = 1;
+    if (attacking) fator = ATTACK_MOVE_FACTOR;
+    else if (charging) fator = CHARGE_MOVE_FACTOR;
+
+    // Terreno multiplica o estado de combate. Como o fator é recalculado a
+    // partir da `rank.speed` a cada quadro, entrar e sair da água não acumula
+    // nada — fora da água a conta simplesmente não tem o 0,8.
+    return inWater ? fator * WATER_SPEED_FACTOR : fator;
 }
 
 /**

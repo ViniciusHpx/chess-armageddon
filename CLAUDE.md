@@ -97,6 +97,13 @@ qualquer outra.
 As células usam os raios da **rainha** (a maior peça): rota aprovada ali serve
 para qualquer rank.
 
+**A água é rota, não barreira.** As células de água entram no grid como
+qualquer outra, com custo `1 / WATER_SPEED_FACTOR` (1,25) por passo — que é
+exatamente o tempo a mais que se leva ali. Assim o A* prefere ponte e terra
+quando elas não são um desvio grande, e manda o bot nadar quando nadar é
+mesmo mais rápido. Medido: com o rio atravessável, os bots passam ~24% do
+tempo na água em vez de fila na ponte.
+
 **O A* quase nunca roda.** A ordem em `World.navigateAngle` é do mais barato ao
 mais caro:
 
@@ -116,8 +123,18 @@ recálculo liberado na hora. É isso que tira o bot da margem e o manda à ponte
 Só limpar a rota não resolve **quina**: o A* devolve praticamente o mesmo
 caminho e ele reencalha no mesmo canto. Por isso a travada também liga o
 contorno (`BOT_UNSTICK_MS`, 500 ms), em que o bot ignora o waypoint e anda numa
-tangente de ~70° (`BOT_UNSTICK_ANGLE`) — e **alterna o lado** a cada travada, em
-vez de insistir no mesmo. É movimento normal, sem teleporte.
+direção de fuga. É movimento normal, sem teleporte.
+
+Essa direção **é escolhida olhando o mapa**, não às cegas: `World.escapeAngle`
+testa desvios crescentes (`BOT_UNSTICK_ANGLES`, 70° → 110° → 150°) para os dois
+lados, começando pelo lado que ainda não foi tentado, e fica com o primeiro que
+tem `BOT_UNSTICK_PROBE` (64 px) livres — medido com a MESMA linha de visão da
+navegação e com o corpo do próprio bot, então um vão onde ele não cabe é
+recusado. Antes era sempre a mesma tangente de 70°, que num canto fechado é
+parede também: ele empacava de novo na janela seguinte. Medido em 120 s com 10
+bots: travadas caíram de 207 para 147, e a maior sequência de travadas
+consecutivas (o bot realmente preso) caiu de 4 para 2 — nenhuma sequência de 3
+ou mais.
 
 A rota sai **suavizada**: pontos que dá para pular em linha reta são
 descartados, senão o bot andaria em escadinha de 32 px trocando de direção o
@@ -203,11 +220,33 @@ As dimensões vivem em [Scenario.js](src/constants/Scenario.js) (cliente) e em
 segunda cópia de `WORLD_WIDTH` e a `Arena` importava justamente a que já não
 existia mais — os clamps viravam `NaN`.
 
-**A máscara é a mesma imagem nos dois lados.** Livre = canal vermelho > 128 (o
-limiar perdoa o anti-aliasing da borda). **Nove pontos por teste** — centro,
-quatro pontas e quatro diagonais da elipse, a 70% dos raios. As diagonais não
-são luxo: com só as pontas, uma quina entra pelo vão entre elas e o ombro do
-corpo termina dentro da pedra.
+**A máscara é a mesma imagem nos dois lados**, e ela tem **três classes de
+terreno**, pela cor do pixel:
+
+| Cor | Terreno | Regra |
+| --- | --- | --- |
+| branco (r > 128) | chão | velocidade cheia |
+| azul (b > 128) | água | caminhável, `WATER_SPEED_FACTOR` (0,8) |
+| preto | parede | não se anda |
+
+O limiar (em vez de "é preto?") perdoa o anti-aliasing da borda. **Nove pontos
+por teste** — centro, quatro pontas e quatro diagonais da elipse, a 70% dos
+raios. As diagonais não são luxo: com só as pontas, uma quina entra pelo vão
+entre elas e o ombro do corpo termina dentro da pedra.
+
+**A água é pintada por script**, não à mão: `npm run paint:water` (no servidor)
+cruza a ARTE (`arena.png`, onde rio e mar são azulados e o terreno é
+amarronzado) com o que a máscara já marcava como bloqueado. Só os
+**componentes conexos grandes** viram água — telhado azul de torre tem poucos
+milhares de pixels e fica de fora. Depois disso, todo pixel bloqueado que está
+a menos de 24 px **tanto da água quanto do chão** vira água também: é a faixa
+rasa da beira, que a máscara antiga marcava como parede. Sem ela a água era
+navegável mas cercada por uma mureta invisível, e ninguém conseguia entrar no
+rio. Muralha de verdade não é tocada, porque o teste exige estar perto dos dois
+lados ao mesmo tempo.
+
+O resultado é revisável no editor de imagem e vai versionado; rodar de novo
+numa máscara já pintada dá o mesmo resultado.
 
 | Onde | O quê |
 | --- | --- |
@@ -369,6 +408,19 @@ Contra um alvo só, a invulnerabilidade de 500 ms (`HIT_INVULN_MS`) limita os
 dois, e o leve rende mais dano por segundo. O carregado paga por: alcance
 dobrado (pega quem está fugindo), empurrão que cria espaço, e matar em dois
 golpes em vez de quatro.
+
+**Água deixa lento.** Dentro do rio ou do mar todo personagem anda a
+`WATER_SPEED_FACTOR` (0,8) — jogador, bot, qualquer peça, sem exceção. O fator
+entra no mesmo `movementFactor(attacking, charging, inWater)` que já era a
+fonte única da velocidade, então ele MULTIPLICA o estado de combate (atacar
+nadando é 0,6 × 0,8) e não existe em lugar nenhum um `speed *= 0.8` solto. Como
+a velocidade é recalculada a partir da `rank.speed` a cada passo, sair da água
+devolve os 100% sozinho e o freio nunca acumula.
+
+Quem responde "está na água?" é a máscara, no centro da elipse — uma consulta
+de bit por personagem por tick, sem zona, sem gatilho e sem estado guardado. No
+online a resposta é do servidor (`World.inWater`); o cliente faz a mesma
+consulta só para a previsão local não divergir.
 
 **Carregar deixa lento.** Enquanto a carga está em curso o personagem anda a
 `CHARGE_MOVE_FACTOR` (0,45) da velocidade — mais devagar que durante o próprio

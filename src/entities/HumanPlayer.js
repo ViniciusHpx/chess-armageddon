@@ -109,7 +109,7 @@ export default class HumanPlayer extends PlayerBase {
             this.setVelocity(dash.vx, dash.vy);
         } else {
             const speed = this._currentRank.speed *
-                movementFactor(this._isAttacking, this._isCharging);
+                movementFactor(this._isAttacking, this._isCharging, this.isInWater());
 
             this.setVelocity(dx * speed, dy * speed);
 

@@ -785,7 +785,7 @@ export class Arena extends Phaser.Scene {
             // vira divergência e a reconciliação puxa o boneco para trás.
             const atacando = localState.attacking || this.localAttackPending;
             const carregando = this.localCharging || localState.charging;
-            const fator = movementFactor(atacando, carregando);
+            const fator = movementFactor(atacando, carregando, this.naAgua(localState));
             const { dx, dy } = this.inputs.getMovementVector();
             const speed = RANKS[RANK_ORDER[localState.rank]].speed * fator;
             this.predX += dx * speed * dt;
@@ -894,6 +894,19 @@ export class Arena extends Phaser.Scene {
             this.predX = corrigidoX;
             this.predY = corrigidoY;
         }
+    }
+
+    /**
+     * O jogador local está com o corpo na água?
+     *
+     * Uma consulta de pixel no centro da elipse — o mesmo ponto que o servidor
+     * usa em `World.inWater`. Sem estado guardado: sair da água devolve a
+     * velocidade no quadro seguinte, e o fator nunca se acumula.
+     */
+    naAgua(localState) {
+        if (!this.mapCollider) return false;
+        const forma = this.formaLocal(localState);
+        return this.mapCollider.isWater(this.predX, this.predY + forma.offsetY);
     }
 
     /**

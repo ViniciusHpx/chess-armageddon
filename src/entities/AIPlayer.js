@@ -178,7 +178,7 @@ export default class AIPlayer extends PlayerBase {
         // Durante o golpe, reduzida: antes o bot mantinha a velocidade do
         // quadro anterior e deslizava solto pelos 200 ms do windup.
         const speed = this._currentRank.speed *
-            movementFactor(this._isAttacking, this._isCharging);
+            movementFactor(this._isAttacking, this._isCharging, this.isInWater());
           
         const vx = Math.cos(moveAngle) * speed;
         const vy = Math.sin(moveAngle) * speed;

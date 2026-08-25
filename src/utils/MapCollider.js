@@ -38,10 +38,29 @@ export default class MapCollider {
         // Calcula o índice no array de bytes (pixel = y * largura + x) * 4 canais
         const index = (py * this.halfWidth + px) * 4;
         const r = this.pixelData[index];
+        const b = this.pixelData[index + 2];
 
-        // Se o canal vermelho for > 128 tratamos como branco/livre.
-        // Isso dá segurança caso a borda da imagem tenha algum "anti-aliasing" cinza.
-        return r > 128;
+        // Branco (vermelho > 128) é chão; azul é água, e dá para andar nos dois.
+        // O limiar (em vez de "é preto?") perdoa o anti-aliasing do desenho.
+        return r > 128 || b > 128;
+    }
+
+    /**
+     * O ponto é água? Espelha `CollisionMask.isWater` do servidor.
+     *
+     * Água é o azul da máscara: navegável como o chão, só que mais lenta
+     * (`WATER_SPEED_FACTOR`). Quem pinta é `scripts/paint-water.mjs`, no
+     * servidor; aqui só se lê o pixel.
+     */
+    isWater(x, y) {
+        let px = Math.floor(x);
+        const py = Math.floor(y);
+
+        if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
+        if (px >= this.halfWidth) px = this.width - 1 - px;
+
+        const index = (py * this.halfWidth + px) * 4;
+        return this.pixelData[index] <= 128 && this.pixelData[index + 2] > 128;
     }
 
     /**
