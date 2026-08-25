@@ -70,6 +70,18 @@ export const DEFAULT_GAME_MODE = 'team_deathmatch';
  */
 export const CHARGED_ATTACK_ENABLED = false;
 
+/**
+ * Rank que atravessa estrutura durante o dash — o salto do cavalo do xadrez.
+ * Espelha `DASH_PHASE_RANK`/`canPhaseDash` do servidor: é regra da PEÇA, então
+ * vale para jogador e bot, e some quando ela promove.
+ */
+export const DASH_PHASE_RANK = 'HORSE';
+
+/** O rank atravessa parede durante o dash? */
+export function canPhaseDash(rankKey) {
+    return rankKey === DASH_PHASE_RANK;
+}
+
 /** Abates que decidem uma partida de `team_deathmatch` (espelha o servidor). */
 export const TEAM_KILL_LIMIT = 40;
 

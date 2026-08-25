@@ -456,6 +456,35 @@ elipses do resolver (Y × `ELLIPSE_RATIO`, distância entre centros) e encerra o
 dash local no contato; só bloqueia quem está à frente, comparando a distância
 nova com a atual.
 
+**O cavalo atravessa estrutura no dash.** É o salto do cavalo do xadrez, e é
+regra da **peça**: `canPhaseDash(rankKey)` (`DASH_PHASE_RANK`, espelhado em
+[Hierarchy.js](src/constants/Hierarchy.js)) — humano e bot passam pelo mesmo
+`World.startDash`, então os dois ganham a travessia ao virar cavalo e a perdem
+ao promover.
+
+A decisão é tomada **uma vez, no início do dash**, e testa só o ponto de
+chegada (`dashLandsFree`: origem + direção × `DASH_DISTANCE`) com a mesma
+`canStand` de qualquer movimento — as nove sondas da elipse, então não existe
+pousar meio dentro da parede. A trajetória não é varrida: o que está no meio é
+justamente o que se atravessa, e uma sonda por dash custa menos que percorrer o
+caminho. Chegada reprovada (parede grossa, outra estrutura atrás, borda do
+mapa) → `dashPhasing` fica `false` e o dash é o normal, parando na parede.
+
+Enquanto `dashPhasing` está de pé, **só a máscara do cenário é suspensa** para
+aquele ator: `moveWithCollision` aplica o destino direto, e a revalidação por
+`lastValidX/Y` fica de fora (senão ela devolveria o cavalo ao ponto de partida a
+cada tick, já que ele está dentro da parede por projeto). Continuam valendo o
+clamp da borda, a separação entre personagens e o cooldown. A bandeira cai no
+tick em que o dash termina — depois de o movimento daquele tick já ter sido
+aplicado —, e aí a validação normal volta e aprova a chegada. Dash cancelado no
+meio (morte, desconexão) cai na rede de segurança de sempre: posição inválida
+volta para `lastValid`.
+
+A previsão do cliente ([Arena.js](src/scenes/Arena.js)) repete a mesma decisão
+com `MapCollider.canStand`; sem isso ela pararia na parede enquanto o servidor
+atravessa, e a reconciliação arrastaria o boneco os 220 px depois. O modo
+offline usa a mesma regra em `PlayerBase.startDash`/`constrainPosition`.
+
 **Esquiva dos bots.** `World.tryBotDodge` (online) e `AIPlayer.tryDodge` (offline)
 usam a mesma regra: filtros baratos primeiro (cooldown → existe golpe inimigo em
 curso → atacante dentro do alcance de perigo → tempo de reação cumprido) e então

@@ -6,7 +6,8 @@ import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
 import {
     movementFactor, attackRecoveryMs, attackWindupMs, chargePower,
-    CHARGED_ATTACK_ENABLED, DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
+    canPhaseDash, CHARGED_ATTACK_ENABLED,
+    DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
     GAME_MODES, RANKS, RANK_ORDER, TEAM_KILL_LIMIT, TEAM_ORDER
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
@@ -166,6 +167,13 @@ export class Arena extends Phaser.Scene {
         this.localDashDirY = 0;
         /** Distância que falta no dash previsto — mesma conta do servidor. */
         this.localDashRemaining = 0;
+        /**
+         * O dash previsto é de travessia (cavalo)? Decidido no toque, com a
+         * mesma regra do `World.startDash`: sem espelhar isto, a previsão
+         * pararia na parede enquanto o servidor atravessa, e a reconciliação
+         * arrastaria o boneco os 220 px depois.
+         */
+        this.localDashPhasing = false;
         // Cooldown otimista, só para o botão apagar na hora do toque. O valor
         // do servidor (`dashCd`) manda assim que chega.
         this.localDashReadyAt = 0;
@@ -579,6 +587,8 @@ export class Arena extends Phaser.Scene {
         this.localDashUntil = this.time.now + DASH_TIMEOUT_MS;
         this.localDashRemaining = DASH_DISTANCE;
         this.localDashReadyAt = this.time.now + DASH_COOLDOWN_MS;
+        this.localDashPhasing = canPhaseDash(RANK_ORDER[localState.rank])
+            && this.dashLandsFree(localState, this.localDashDirX, this.localDashDirY);
 
         const actor = this.actors.get(this.room.sessionId);
         if (actor) {
@@ -640,6 +650,7 @@ export class Arena extends Phaser.Scene {
         this.localAttackPending = false;
         this.localDashUntil = 0;
         this.localDashRemaining = 0;
+        this.localDashPhasing = false;
     }
 
     /**
@@ -705,7 +716,7 @@ export class Arena extends Phaser.Scene {
             const proxX = this.predX + this.localDashDirX * speed * dt;
             const proxY = this.predY + this.localDashDirY * speed * dt;
 
-            if (this.dashHitsActor(localState, proxX, proxY)) {
+            if (!this.localDashPhasing && this.dashHitsActor(localState, proxX, proxY)) {
                 // Esbarrou em alguém: o dash acaba aqui, encostado nele — a
                 // mesma regra do servidor. Sem isto a previsão atravessava o
                 // outro personagem e ia até os 220 px, e quando o dash acabava
@@ -737,7 +748,10 @@ export class Arena extends Phaser.Scene {
         // Mesma resolução do servidor (`CollisionMask.resolveMove`): tenta o
         // destino, desliza em X, desliza em Y, senão fica. O dash também passa
         // por aqui — impulso não é licença para atravessar muralha.
-        if (this.mapCollider) {
+        // Em travessia a máscara não vale para este passo: o cavalo está dentro
+        // da estrutura de propósito, e o ponto de chegada já foi aprovado por
+        // `dashLandsFree`. O clamp da borda acima continua valendo sempre.
+        if (this.mapCollider && !(dashLocal && this.localDashPhasing)) {
             const forma = this.formaLocal(localState);
             const resolvido = this.mapCollider.resolveMove(
                 antesColisaoX, antesColisaoY, this.predX, this.predY,
@@ -818,6 +832,28 @@ export class Arena extends Phaser.Scene {
             this.predX = corrigidoX;
             this.predY = corrigidoY;
         }
+    }
+
+    /**
+     * O dash inteiro cabe do outro lado da estrutura?
+     *
+     * Espelha `World.dashLandsFree`: testa só o PONTO DE CHEGADA (origem +
+     * direção × `DASH_DISTANCE`) com a mesma `canStand` da máscara — as nove
+     * sondas da elipse, então nada de pousar meio dentro da parede. A borda do
+     * mapa reprova a travessia; ali o dash volta a ser o normal.
+     */
+    dashLandsFree(localState, dirX, dirY) {
+        if (!this.mapCollider) return false;
+
+        const x = this.predX + dirX * DASH_DISTANCE;
+        const y = this.predY + dirY * DASH_DISTANCE;
+        const size = RANKS[RANK_ORDER[localState.rank]].size;
+
+        if (x < size.width / 2 || x > WORLD_WIDTH - size.width / 2) return false;
+        if (y < size.height / 2 || y > WORLD_HEIGHT - size.height / 2) return false;
+
+        const forma = this.formaLocal(localState);
+        return this.mapCollider.canStand(x, y + forma.offsetY, forma.rx, forma.ry);
     }
 
     /**

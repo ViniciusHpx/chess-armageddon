@@ -2,7 +2,7 @@ import {
     levelFromRank, levelFromXp, rankKeyForLevel, XP_PER_KILL, XP_PER_LEVEL,
     attackRecoveryMs, attackWindupMs, chargeAreaMult, chargeDamage, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
-    RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
+    RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey, canPhaseDash,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
 } from '../constants/Hierarchy.js';
 import { insideSpawnZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
@@ -96,6 +96,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._dashRemaining = 0;
         this._dashDirX = 0;
         this._dashDirY = 0;
+        /** Dash de travessia em curso (cavalo) — ver `dashLandsFree`. */
+        this._dashPhasing = false;
         /** Invulnerabilidade do dash. Separada de `_isInvulnerable` para os
          *  `delayedCall` do dano e do respawn não cortarem uma a outra. */
         this._dashInvulnUntil = 0;
@@ -352,6 +354,10 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         this._dashDirX = dx / length;
         this._dashDirY = dy / length;
+        // Cavalo salta a estrutura, desde que caiba do outro lado. Decidido
+        // aqui, no ponto por onde passam jogador e bot — é regra da peça.
+        this._dashPhasing = canPhaseDash(this._currentRank.key)
+            && this.dashLandsFree(this._dashDirX, this._dashDirY);
         this._dashUntil = now + DASH_TIMEOUT_MS;
         this._dashRemaining = DASH_DISTANCE;
         // O cooldown conta do INÍCIO: mexer na duração não muda a cadência.
@@ -399,8 +405,33 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         return Math.min(1, falta / cooldownMs);
     }
 
+    /**
+     * O dash inteiro cabe do outro lado da estrutura?
+     *
+     * Espelha `World.dashLandsFree`: só o PONTO DE CHEGADA é testado, com a
+     * mesma `canStand` do `MapCollider` (as nove sondas da elipse), e a borda
+     * do mapa reprova a travessia — ali o dash volta a ser o normal.
+     */
+    dashLandsFree(dirX, dirY) {
+        const mapCollider = this.scene.mapCollider;
+        if (!mapCollider) return false;
+
+        const x = this.x + dirX * DASH_DISTANCE;
+        const y = this.y + dirY * DASH_DISTANCE;
+
+        const bounds = this.scene.physics.world.bounds;
+        const halfW = this.displayWidth / 2;
+        const halfH = this.displayHeight / 2;
+        if (x < bounds.x + halfW || x > bounds.right - halfW) return false;
+        if (y < bounds.y + halfH || y > bounds.bottom - halfH) return false;
+
+        const offsetY = halfH - this.collisionRx + (this.collisionRy * 4) / 3;
+        return mapCollider.canStand(x, y + offsetY, this.collisionRx, this.collisionRy);
+    }
+
     /** Corta um dash em curso (morte, respawn). Não mexe no cooldown. */
     cancelDash() {
+        this._dashPhasing = false;
         this._dashUntil = 0;
         this._dashRemaining = 0;
         this._dashDirX = 0;
@@ -1022,6 +1053,21 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         let newX = Phaser.Math.Clamp(this.x, bounds.x + halfW, bounds.right - halfW);
         let newY = Phaser.Math.Clamp(this.y, bounds.y + halfH, bounds.bottom - halfH);
         this.setPosition(newX, newY);
+
+        // Cavalo atravessando: o deslize contra o cenário fica suspenso — ele
+        // está dentro da estrutura de propósito, e o ponto de chegada já foi
+        // aprovado por `dashLandsFree`. O clamp da borda, acima, continua
+        // valendo. A bandeira só cai DEPOIS de o deslize ter sido pulado no
+        // quadro em que o dash acaba: resolver a partir de uma posição dentro
+        // da parede acionaria o resgate do `MapCollider` e jogaria o cavalo
+        // para um lado qualquer.
+        if (this._dashPhasing) {
+            if (!this.isDashing) this._dashPhasing = false;
+            this._prevX = this.x;
+            this._prevY = this.y;
+            this.body.updateFromGameObject();
+            return;
+        }
 
         // Deslize contra o cenário. A resolução vive no `MapCollider` e é a
         // MESMA que o servidor usa (`CollisionMask.resolveMove`): tenta a
