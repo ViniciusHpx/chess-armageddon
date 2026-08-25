@@ -70,6 +70,55 @@ export default class MapCollider {
     }
 
     /**
+     * O ponto é tabuleiro de ponte? Espelha `CollisionMask.isBridge`.
+     *
+     * O vermelho (255,0,0) da máscara. É chão para todos os efeitos —
+     * caminhável e com velocidade cheia; o que ele tem de diferente é a regra
+     * de `canCross`. Quem pinta é `scripts/paint-bridges.mjs`, no servidor.
+     */
+    isBridge(x, y) {
+        let px = Math.floor(x);
+        const py = Math.floor(y);
+
+        if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
+        if (px >= this.halfWidth) px = this.width - 1 - px;
+
+        const index = (py * this.halfWidth + px) * 4;
+        return this.pixelData[index] > 128 && this.pixelData[index + 1] <= 128;
+    }
+
+    /**
+     * Dá para ir DAQUI até ALI, olhando só a classe do terreno? Espelha
+     * `CollisionMask.canCross` do servidor.
+     *
+     * A única transição proibida do mapa é **água <-> ponte**: quem está no rio
+     * não sobe no meio do tabuleiro pela lateral, e quem está no tabuleiro não
+     * cai na água de lado. Terra <-> ponte (a ENTRADA, nas duas cabeceiras),
+     * terra <-> água (qualquer margem) e cada classe consigo mesma continuam
+     * livres.
+     *
+     * Os dois pontos são CENTROS DE ELIPSE, a mesma origem de `isWater`: o
+     * corpo pode encostar na ponte sem o passo ser recusado, então ninguém
+     * fica preso na borda.
+     */
+    canCross(fromX, fromY, toX, toY) {
+        const daPonte = this.isBridge(fromX, fromY);
+        const praPonte = this.isBridge(toX, toY);
+        if (daPonte === praPonte) return true;
+
+        return daPonte ? !this.isWater(toX, toY) : !this.isWater(fromX, fromY);
+    }
+
+    /**
+     * O destino serve como próximo passo, vindo daqui? Espelha
+     * `CollisionMask.aceita`: o corpo cabe lá (`canStand`) E o passo é
+     * permitido (`canCross`). Todas as coordenadas são centros de elipse.
+     */
+    aceita(deX, deY, x, y, rx, ry) {
+        return this.canStand(x, y, rx, ry) && this.canCross(deX, deY, x, y);
+    }
+
+    /**
      * O personagem cabe com o centro da elipse aqui?
      *
      * Cinco pontos com os raios a 70% — a mesma conta que
@@ -102,13 +151,14 @@ export default class MapCollider {
      * menos de 1 px da parede, num passo de quadro.
      */
     maxAlong(x, y, dx, dy, offsetY, rx, ry) {
-        if (this.canStand(x + dx, y + dy + offsetY, rx, ry)) return 1;
+        const cy = y + offsetY;
+        if (this.aceita(x, cy, x + dx, cy + dy, rx, ry)) return 1;
 
         let baixo = 0;
         let alto = 1;
         for (let i = 0; i < 4; i++) {
             const meio = (baixo + alto) / 2;
-            if (this.canStand(x + dx * meio, y + dy * meio + offsetY, rx, ry)) baixo = meio;
+            if (this.aceita(x, cy, x + dx * meio, cy + dy * meio, rx, ry)) baixo = meio;
             else alto = meio;
         }
         return baixo;
@@ -121,6 +171,12 @@ export default class MapCollider {
      * Igual a `CollisionMask.resolveMove` do servidor — é o que mantém a
      * previsão local do modo online andando exatamente como a simulação
      * autoritativa, sem a reconciliação ter de desfazer nada.
+     *
+     * O parapeito da ponte (`canCross`) entra aqui como qualquer parede: quem
+     * vem nadando encosta na lateral do tabuleiro e desliza por ela, sem
+     * subir. Todo movimento dos dois modos passa por este método — offline via
+     * `PlayerBase.constrainPosition`, online via `Arena.stepPrediction` —,
+     * então a regra não precisa ser repetida em lugar nenhum.
      *
      * @param {number} offsetY Distância de `y` até o centro da elipse.
      */
@@ -143,7 +199,9 @@ export default class MapCollider {
                 const ang = (i / 8) * Math.PI * 2;
                 const px = x + Math.cos(ang) * raio;
                 const py = y + Math.sin(ang) * raio;
-                if (this.canStand(px, py + offsetY, rx, ry)) return { x: px, y: py };
+                // O resgate respeita o parapeito: quem foi espremido contra a
+                // margem sai pela água, não aparecendo em cima da ponte.
+                if (this.aceita(x, y + offsetY, px, py + offsetY, rx, ry)) return { x: px, y: py };
             }
         }
         return null;
@@ -159,7 +217,9 @@ export default class MapCollider {
         const dx = nextX - prevX;
         const dy = nextY - prevY;
 
-        if (this.canStand(nextX, nextY + offsetY, rx, ry)) return { x: nextX, y: nextY };
+        if (this.aceita(prevX, prevY + offsetY, nextX, nextY + offsetY, rx, ry)) {
+            return { x: nextX, y: nextY };
+        }
 
         // Bateu: vai na diagonal, em X ou em Y — o que render mais, e sempre
         // até ENCOSTAR. Parar seco deixava o personagem a um passo da parede.
@@ -256,15 +316,19 @@ export default class MapCollider {
     }
 
     /**
-     * Joga um raio numa direção. Retorna quantos pixels há de caminho livre 
-     * antes de bater numa parede preta (0,0,0).
+     * Joga um raio numa direção. Retorna quantos pixels há de caminho livre
+     * antes de bater numa parede preta (0,0,0) — ou no parapeito da ponte, que
+     * para o bot offline é obstáculo igual: sem isso ele acharia a lateral do
+     * tabuleiro livre e ficaria empurrando a água contra ela.
      */
     getClearance(x, y, angle, maxDist = 200, step = 15) {
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
 
         for (let d = step; d <= maxDist; d += step) {
-            if (!this.isWalkable(x + cos * d, y + sin * d)) {
+            const px = x + cos * d;
+            const py = y + sin * d;
+            if (!this.isWalkable(px, py) || !this.canCross(x, y, px, py)) {
                 return d;
             }
         }

@@ -91,11 +91,19 @@ tremedeira — o que parecia "lag" era isso.
 colisão**: célula de 32 px, 156 × 53 = 8268 células, montado uma vez na subida
 junto com os componentes conexos. A ponte tem ~96 px livres (3 células) — com
 64 px ela sumiria do grid, e é justamente a travessia que o bot precisa achar.
-Não existe regra de "rio" ou "ponte": a ponte é célula caminhável como
-qualquer outra.
+A ponte é célula caminhável como qualquer outra, com o custo do chão.
 
 As células usam os raios da **rainha** (a maior peça): rota aprovada ali serve
 para qualquer rank.
+
+**A única regra de terreno do grid é a mesma da colisão**: não existe aresta
+entre uma célula de água e uma de ponte (`parapeito()`, o espelho grosseiro de
+`CollisionMask.canCross`). Ela vale nos três lugares que decidem caminho — a
+rotulagem dos componentes ("existe rota?"), a expansão do A* (inclusive as duas
+ortogonais de cada diagonal) e a **linha de visão**, que sem isso enxergaria
+"reta livre" atravessando a lateral do tabuleiro e o bot nem chegaria a pedir
+rota. O bot então contorna até uma cabeceira, como qualquer um. Não há regra de
+"rio" em lugar nenhum: a água segue sendo rota, só que mais cara.
 
 **A água é rota, não barreira.** As células de água entram no grid como
 qualquer outra, com custo `1 / WATER_SPEED_FACTOR` (1,25) por passo — que é
@@ -220,14 +228,18 @@ As dimensões vivem em [Scenario.js](src/constants/Scenario.js) (cliente) e em
 segunda cópia de `WORLD_WIDTH` e a `Arena` importava justamente a que já não
 existia mais — os clamps viravam `NaN`.
 
-**A máscara é a mesma imagem nos dois lados**, e ela tem **três classes de
+**A máscara é a mesma imagem nos dois lados**, e ela tem **quatro classes de
 terreno**, pela cor do pixel:
 
 | Cor | Terreno | Regra |
 | --- | --- | --- |
 | branco (r > 128) | chão | velocidade cheia |
 | azul (b > 128) | água | caminhável, `WATER_SPEED_FACTOR` (0,8) |
+| vermelho (r > 128, g <= 128) | tabuleiro da ponte | chão, velocidade cheia; só não se entra vindo da água |
 | preto | parede | não se anda |
+
+O vermelho tem `r > 128` de propósito: para quem só pergunta "dá para andar?",
+ponte é chão — a máscara nova responde igual à antiga.
 
 O limiar (em vez de "é preto?") perdoa o anti-aliasing da borda. **Nove pontos
 por teste** — centro, quatro pontas e quatro diagonais da elipse, a 70% dos
@@ -256,7 +268,67 @@ que encoste em terra) não é tocada. Medido: travessias do rio com travamento
 caíram de 10/10 para 0/10, e nenhuma delas precisa mais do resgate.
 
 O resultado é revisável no editor de imagem e vai versionado; rodar de novo
-numa máscara já pintada dá o mesmo resultado.
+numa máscara já pintada dá o mesmo resultado. (Cuidado: `paint:water` **não** é
+idempotente — cada rodada come mais uma faixa de "praia", porque a água nova
+cria margem nova. Rode uma vez e revise o resultado.)
+
+### As pontes: só pela cabeceira
+
+Com a água navegável, a ponte tinha virado enfeite: quem vinha nadando subia
+no **meio** do tabuleiro, de lado, e atravessava. A regra é a de sempre — ponte
+se entra pela cabeceira, vindo da terra —, e ela é uma **classe de terreno**,
+não uma zona nem um gatilho.
+
+**As pontes saem da própria máscara** (`npm run paint:bridges`, no servidor),
+por um teste topológico em dois passos e sem uma única coordenada cravada:
+
+1. **vão** — pixel de chão com água dos dois lados a menos de 160 px
+   (esquerda/direita ou cima/baixo), medido sem atravessar parede. Isso pega o
+   tabuleiro inteiro e para exatamente na margem — é ali a cabeceira;
+2. **corte** — desses, sobram só os que **ligam duas massas de terra
+   distintas**. Tirando a ponte, as duas ilhas ficam separadas; tirando uma
+   língua de areia, nada muda. É esse passo que separa ponte de margem
+   estreita.
+
+Nesta máscara o teste acha **um** tabuleiro na metade esquerda (x 1273..1452,
+y 695..787 — 92 px de largura útil, 16 740 px) e, como o mundo é o espelho da
+metade, **isso são as duas pontes**: uma regra, um código, as duas atendidas. O
+resultado é o mesmo para qualquer vão entre 100 e 200 px, então o número não é
+ajuste fino. Ponte nova no mapa entra sozinha — inclusive nos testes, que
+iteram sobre o que a máscara diz.
+
+**A regra é uma transição proibida, e só uma: água <-> ponte.** Mora em
+`CollisionMask.canCross` (servidor) e `MapCollider.canCross` (cliente), e vale
+nos dois sentidos — é o parapeito. Continuam livres terra <-> ponte (a
+cabeceira), terra <-> água (qualquer margem) e cada classe consigo mesma
+(atravessar a ponte inteira, nadar o rio inteiro). Quem já está no tabuleiro
+segue andando e sai pelo outro lado; a regra impede **entrar**, não passar.
+
+Três decisões que evitam justamente os problemas que a ideia costuma trazer:
+
+- **quem responde é o centro da elipse**, o mesmo ponto de `inWater` — não as
+  nove sondas do corpo. Assim o corpo pode encostar na ponte sem o passo ser
+  recusado, e ninguém fica entalado na borda. Medido encostando no parapeito:
+  0 tremor (< 0,5 px em 20 ticks) e zero chamadas de `nearestFree`;
+- **entra no `resolveMove`**, o funil por onde passa todo movimento dos dois
+  lados — jogador, bot, empurrão de golpe, dash, e a própria correção da
+  reconciliação. Não existe caminho de movimento que escape dele, então não há
+  regra repetida nem diferença entre jogador e bot. Encostar no parapeito é
+  encostar numa parede: o deslize em X/Y e o `slideAround` continuam valendo, e
+  nadar rente à lateral funciona;
+- **a ponte não é água**, então `isWater` continua `false` ali e a velocidade
+  é a cheia. Nada de herdar o 0,8 só por passar por cima do rio.
+
+O que NÃO passa pelo `resolveMove` é a separação entre personagens e o clamp da
+borda, que escrevem posição direto — e por ali dava para subir na ponte sendo
+empurrado por um aliado encostado na margem. A revalidação do tick
+(`World.posicaoAceita`) fechou isso: além de caber, a posição do fim do tick tem
+de ser alcançável a partir de `lastValid*`. Medido: sem a guarda, o empurrado
+passa os 60 ticks em cima do tabuleiro; com ela, nenhum.
+
+O cavalo em travessia (`dashPhasing`) atravessa o parapeito como atravessa
+muralha: é a mesma suspensão da máscara, com o mesmo pouso validado. É
+habilidade de peça, com cooldown, não a entrada lateral que se está fechando.
 
 | Onde | O quê |
 | --- | --- |
@@ -271,8 +343,10 @@ mapa.
 **Deploy.** A arte é do cliente, mas a cópia em
 `chess-armageddon-server/assets/arena_collision.png` é **versionada** (28 KB) — cliente
 e servidor têm deploys separados e, no host do servidor, a pasta do cliente não
-existe. Ao mudar a arte de colisão, rode `npm run sync:mask` no servidor e
-commite a cópia. `COLLISION_MASK_PATH` sobrescreve o caminho se preciso.
+existe. Ao mudar a arte de colisão, repinte o que é derivado
+(`npm run paint:bridges`, e `npm run paint:water` só se a água tiver mudado —
+ele não é idempotente), rode `npm run sync:mask` no servidor e commite as duas
+cópias. `COLLISION_MASK_PATH` sobrescreve o caminho se preciso.
 
 O script lê o nome do arquivo do próprio `COLLISION_PATH` do cliente e **falha**
 se não achar a origem. Antes o caminho estava escrito à mão nele: a arte foi
