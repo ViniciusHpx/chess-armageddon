@@ -36,6 +36,17 @@ import { ELLIPSE_RATIO } from '../utils/CollisionResolver.js';
 const SNAP_DISTANCE = 250;
 
 /**
+ * Erro tolerado ao fim de uma travessia de parede (dash do cavalo).
+ *
+ * Limiar próprio, muito menor que `SNAP_DISTANCE`, porque aqui a correção
+ * suave não funciona: se os dois lados discordaram sobre atravessar, o alvo
+ * está do OUTRO lado da parede e a resolução contra o cenário barra a
+ * correção — o boneco fica encostado na parede para sempre (na prática, até o
+ * dash seguinte). Neste caso vale saltar.
+ */
+const PHASE_RESYNC_DISTANCE = 40;
+
+/**
  * Fração do erro corrigida por segundo ao reconciliar com o servidor.
  *
  * Pode ser alto porque, com a reconciliação por sequência, o erro que sobra é
@@ -174,6 +185,8 @@ export class Arena extends Phaser.Scene {
          * arrastaria o boneco os 220 px depois.
          */
         this.localDashPhasing = false;
+        /** Última travessia vista no estado do servidor, para achar o fim dela. */
+        this.serverDashPhasing = false;
         // Cooldown otimista, só para o botão apagar na hora do toque. O valor
         // do servidor (`dashCd`) manda assim que chega.
         this.localDashReadyAt = 0;
@@ -209,13 +222,45 @@ export class Arena extends Phaser.Scene {
         this.game.events.on(Phaser.Core.Events.BLUR, halt);
         this.game.events.on(Phaser.Core.Events.HIDDEN, halt);
 
+        // Fechar a aba/navegador avisa o servidor na hora, em vez de deixá-lo
+        // segurando a vaga pelos 20 s de reconexão — é isso que fazia a sala
+        // continuar na lista com um jogador que já foi embora.
+        //
+        // Não é a garantia da limpeza, e nem poderia ser: `pagehide` não chega
+        // num travamento ou numa queda de rede. A garantia continua sendo a
+        // desconexão detectada pelo servidor; isto só torna o caso comum
+        // imediato. `pagehide` cobre mais navegadores que `beforeunload` no
+        // celular, e a saída é idempotente.
+        const sair = () => this.leaveRoom();
+        window.addEventListener('pagehide', sair);
+
         this.connect();
 
         this.events.once('shutdown', () => {
             this.game.events.off(Phaser.Core.Events.BLUR, halt);
             this.game.events.off(Phaser.Core.Events.HIDDEN, halt);
-            if (this.room) this.room.leave();
+            window.removeEventListener('pagehide', sair);
+            this.leaveRoom();
         });
+    }
+
+    /**
+     * Sai da sala de propósito (CONSENTED).
+     *
+     * É o que diferencia "fui embora" de "caiu a conexão": a saída consentida
+     * remove o jogador na hora, e a sala sem ninguém é descartada pelo próprio
+     * Colyseus. Sem ela, o servidor guarda a vaga pelos `RECONNECTION_SECONDS`
+     * e a sala fica na lista com um jogador fantasma.
+     *
+     * Idempotente: pode ser chamada pelo botão, pelo `pagehide` e pelo
+     * `shutdown` da cena sem problema.
+     */
+    leaveRoom() {
+        if (!this.room) return;
+
+        const room = this.room;
+        this.room = null;
+        room.leave();
     }
 
     /** Zera movimento e carga no servidor. Usado ao perder o foco da aba. */
@@ -700,6 +745,11 @@ export class Arena extends Phaser.Scene {
             this.localAttackPending = false;
         }
 
+        // O servidor manda na travessia. Enquanto ele diz que está atravessando,
+        // a previsão atravessa também — mesmo que a decisão local tenha sido
+        // outra (um pixel de máscara, a diferença de posição do RTT).
+        if (localState.dashPhasing) this.localDashPhasing = true;
+
         const dashLocal = this.time.now < this.localDashUntil && this.localDashRemaining > 0;
         const emDash = dashLocal || localState.dashing;
 
@@ -795,6 +845,18 @@ export class Arena extends Phaser.Scene {
             this.resetPrediction(localState);
             return;
         }
+
+        // Fim da travessia: se sobrou erro relevante, salta. Ver
+        // PHASE_RESYNC_DISTANCE — é o caso em que a correção suave não passa
+        // pela parede e o boneco ficaria preso na borda.
+        if (this.serverDashPhasing && !localState.dashPhasing) {
+            this.serverDashPhasing = false;
+            if (Math.hypot(errorX, errorY) > PHASE_RESYNC_DISTANCE) {
+                this.resetPrediction(localState);
+                return;
+            }
+        }
+        this.serverDashPhasing = !!localState.dashPhasing;
 
         // Durante o dash a reconciliação fica suspensa.
         //
@@ -992,7 +1054,10 @@ export class Arena extends Phaser.Scene {
                 won: winner === localState.team,
                 score: `${meu}  x  ${outro}`,
                 onRematch: () => this.acceptRematch(),
-                onMenu: () => reloadIntoLobby()
+                onMenu: () => {
+                    this.leaveRoom();
+                    reloadIntoLobby();
+                }
             });
         }
 
@@ -1023,6 +1088,9 @@ export class Arena extends Phaser.Scene {
         if (!roomId) return;
 
         this.wantRematch = false;
+        // Larga a sala velha antes de ir para a nova: senão ela ficaria com um
+        // jogador fantasma até a janela de reconexão vencer.
+        this.leaveRoom();
         reloadIntoRoom(roomId);
     }
 }

@@ -225,6 +225,14 @@ e servidor têm deploys separados e, no host do servidor, a pasta do cliente nã
 existe. Ao mudar a arte de colisão, rode `npm run sync:mask` no servidor e
 commite a cópia. `COLLISION_MASK_PATH` sobrescreve o caminho se preciso.
 
+O script lê o nome do arquivo do próprio `COLLISION_PATH` do cliente e **falha**
+se não achar a origem. Antes o caminho estava escrito à mão nele: a arte foi
+renomeada para `arena_collision.png`, o script passou a avisar e sair com
+sucesso, e a cópia do servidor congelou numa versão antiga. Os dois lados
+ficaram colidindo contra mapas diferentes (1688 pixels de diferença) — pouco
+para se notar andando, o bastante para cliente e servidor discordarem sobre
+atravessar uma parede.
+
 A máscara é carregada em `app.config.ts`, **antes de o servidor aceitar
 conexões**: faltando o arquivo (ou com tamanho diferente do esperado) ele não
 sobe, e o log diz onde procurou. Carregar isso na primeira sala, como era antes,
@@ -485,6 +493,21 @@ com `MapCollider.canStand`; sem isso ela pararia na parede enquanto o servidor
 atravessa, e a reconciliação arrastaria o boneco os 220 px depois. O modo
 offline usa a mesma regra em `PlayerBase.startDash`/`constrainPosition`.
 
+**Quem decide de verdade é o servidor**, e ele publica em
+`ActorState.dashPhasing`. Isso existe porque a decisão é binária: bastava um
+pixel de máscara ou a diferença de posição do RTT para os dois lados
+discordarem, e aí o boneco ficava **preso na borda da parede** — o alvo da
+reconciliação ficava do outro lado e a resolução contra o cenário barrava a
+correção, quadro após quadro, até o jogador dashar de novo. Hoje a previsão
+adota a travessia do servidor enquanto ela dura e, no fim, salta se ainda
+sobrar mais de `PHASE_RESYNC_DISTANCE` (40 px) — o único caso em que a correção
+suave não tem como chegar ao alvo.
+
+E o pouso é garantido: `Actor.dashTargetX/Y` guarda o ponto aprovado, e se o
+dash terminar em posição inválida (levou golpe no meio do voo, foi separado de
+alguém) o ator vai para lá. Sem isso a rede de segurança o devolveria ao ponto
+de PARTIDA, encostado na parede, como se não tivesse atravessado.
+
 **Esquiva dos bots.** `World.tryBotDodge` (online) e `AIPlayer.tryDodge` (offline)
 usam a mesma regra: filtros baratos primeiro (cooldown → existe golpe inimigo em
 curso → atacante dentro do alcance de perigo → tempo de reação cumprido) e então
@@ -632,7 +655,16 @@ estado redundante (e mais um jeito de divergir do `World`). O que importa é
 "aceita gente?", e isso é o `lock()` nativo: sala travada some da listagem e
 recusa entrada. Ela destrava sozinha quando abre vaga.
 
-**Saída.** `onLeave` mantém os 20 s de reconexão que já existiam; expirada a
+**Saída.** Ir embora de propósito (botão MENU, revanche, fechar a aba) manda um
+`room.leave()` **consentido**, e aí o jogador sai na hora e a sala vazia é
+descartada pelo Colyseus. Sem isso a saída virava "queda de conexão": o servidor
+segurava a vaga pelos 20 s de reconexão e a sala continuava na lista com um
+jogador que já tinha ido. `Arena.leaveRoom()` é idempotente e está ligada ao
+botão, ao `pagehide` e ao `shutdown` da cena — o `pagehide` só antecipa o caso
+comum; a garantia continua sendo a desconexão detectada pelo servidor, que cobre
+travamento e queda de rede.
+
+`onLeave` mantém os 20 s de reconexão que já existiam; expirada a
 janela, `dropPlayer` remove o ator e **repõe um bot só até `botsPerTeam`** — o
 número escolhido na criação. Assim uma sala feita com 0 bots nunca ganha bots,
 e o slot simplesmente volta a ficar vago.
