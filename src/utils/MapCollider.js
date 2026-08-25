@@ -2,6 +2,12 @@ import {
     HALF_WORLD_WIDTH, WORLD_WIDTH, WORLD_HEIGHT, SPAWN_ZONE, SPAWN_ATTEMPTS
 } from '../constants/Scenario.js';
 
+/** Desvios testados ao deslizar (30° e 60°). Espelha o servidor. */
+const SLIDE_ANGLES = [Math.PI / 6, Math.PI / 3];
+
+/** Avanço abaixo do qual o passo conta como "não saiu do lugar", em px. */
+const SLIDE_MIN_AVANCO = 0.05;
+
 export default class MapCollider {
     constructor(scene, textureKey) {
         this.width = WORLD_WIDTH;
@@ -165,11 +171,58 @@ export default class MapCollider {
         const avancoX = tX * Math.abs(dx);
         const avancoY = tY * Math.abs(dy);
 
+        // Nem a diagonal nem os eixos saíram do lugar: tenta deslizar pela
+        // superfície. Espelha `CollisionMask.slideAround` do servidor — sem
+        // isto a previsão pararia onde a simulação desliza.
+        if (Math.max(avancoDiag, avancoX, avancoY) < SLIDE_MIN_AVANCO) {
+            const desvio = this.slideAround(prevX, prevY, dx, dy, offsetY, rx, ry);
+            if (desvio) return desvio;
+        }
+
         if (avancoDiag >= avancoX && avancoDiag >= avancoY) {
             return { x: prevX + dx * tDiag, y: prevY + dy * tDiag };
         }
         if (avancoX >= avancoY) return { x: prevX + dx * tX, y: prevY };
         return { x: prevX, y: prevY + dy * tY };
+    }
+
+    /**
+     * Deslize pela superfície quando nem a diagonal nem os eixos avançam.
+     *
+     * Espelho de `CollisionMask.slideAround`: gira o passo em `SLIDE_ANGLES`
+     * para os dois lados, mantendo o tamanho, e fica com o que mais avança na
+     * direção pedida. Contra uma parede reta de frente todos os giros também
+     * batem, e a parada seca continua sendo o resultado.
+     */
+    slideAround(prevX, prevY, dx, dy, offsetY, rx, ry) {
+        const passo = Math.hypot(dx, dy);
+        if (passo < SLIDE_MIN_AVANCO) return null;
+
+        const base = Math.atan2(dy, dx);
+        const dirX = dx / passo;
+        const dirY = dy / passo;
+
+        let melhor = null;
+        let melhorProjecao = SLIDE_MIN_AVANCO;
+
+        for (const desvio of SLIDE_ANGLES) {
+            for (const lado of [1, -1]) {
+                const ang = base + lado * desvio;
+                const gx = Math.cos(ang) * passo;
+                const gy = Math.sin(ang) * passo;
+
+                const t = this.maxAlong(prevX, prevY, gx, gy, offsetY, rx, ry);
+                if (t <= 0) continue;
+
+                const projecao = (gx * dirX + gy * dirY) * t;
+                if (projecao <= melhorProjecao) continue;
+
+                melhorProjecao = projecao;
+                melhor = { x: prevX + gx * t, y: prevY + gy * t };
+            }
+        }
+
+        return melhor;
     }
 
     /**

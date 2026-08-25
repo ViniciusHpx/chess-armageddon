@@ -245,6 +245,16 @@ navegável mas cercada por uma mureta invisível, e ninguém conseguia entrar no
 rio. Muralha de verdade não é tocada, porque o teste exige estar perto dos dois
 lados ao mesmo tempo.
 
+O script ainda faz uma terceira coisa: **limpa respingo**. A arte da água tem
+pontos escuros (pedrinha, sombra, espuma) que a máscara marcava como parede.
+Cada um deles é invisível na tela e proíbe uma área do **tamanho do corpo** —
+as nove sondas de `canStand` batem no respingo de até meio corpo de distância.
+Eram 267 desses no rio, e eram eles que travavam quem atravessava a água: sem
+parede nenhuma à vista, o personagem parava. Blocos bloqueados menores que a
+elipse do peão e cercados **só** de água viram água; ilha de verdade (grande, ou
+que encoste em terra) não é tocada. Medido: travessias do rio com travamento
+caíram de 10/10 para 0/10, e nenhuma delas precisa mais do resgate.
+
 O resultado é revisável no editor de imagem e vai versionado; rodar de novo
 numa máscara já pintada dá o mesmo resultado.
 
@@ -283,7 +293,20 @@ Colyseus já resolve sozinho.
 **Resolução do movimento** (`resolveMove`, idêntica nos dois lados): três
 candidatos — seguir na diagonal, deslizar em X, deslizar em Y —, cada um levado
 até **encostar** por bisseção (`maxAlong`, 4 cortes: para a menos de 1 px da
-parede). Vence o que rende mais deslocamento. A versão anterior era
+parede). Vence o que rende mais deslocamento.
+
+**E, se nenhum deles sair do lugar, `slideAround`**: o passo é girado em
+`SLIDE_ANGLES` (30° e 60°) para os dois lados, mantendo o tamanho, e vence o que
+mais avança na direção pedida. Os três candidatos de cima só sabem cortar em X e
+em Y; contra uma borda INCLINADA — margem de ilha, quina de muralha — quem anda
+num eixo puro (tecla é eixo puro) ficava com os três zerados e parava seco tendo
+a superfície livre ao lado. Contra parede reta de frente os giros também batem
+nela, então bater de frente continua sendo parada seca — deslizar só acontece
+quando há superfície para deslizar. Custo: só no quadro em que o personagem
+ficaria parado, no máximo quatro bisseções, e o deslocamento nunca passa do
+passo do quadro. Medido no mapa inteiro (1032 caminhadas, 8 direções): quadros
+parados caíram de 7,8% para 5,1%, e caminhadas travadas de 40 para 24 — o que
+sobra é gente andando contra muralha de frente. A versão anterior era
 tudo-ou-nada e parava o personagem a um passo da parede; o bot então empurrava o
 vazio sem sair do lugar. A posição inválida **nunca é aceita** — não existe
 "andou e voltou", que produziria teleporte e jitter.
@@ -294,6 +317,12 @@ o resgate abaixo jogava o boneco para fora, a entrada trazia de volta, e o
 resultado era o personagem **tremendo parado** contra o obstáculo. Medido antes:
 45,8 px de amplitude e 7,6 px de erro contra o servidor; depois: 0,02 px e zero
 inversões de sentido.
+
+**O resgate é última linha, não caminho normal.** Medido depois das correções:
+zero chamadas de `nearestFree` numa travessia de rio e em 120 s de combate com
+10 bots, e nenhuma posição inválida. Se ele voltar a aparecer no caminho comum,
+é sinal de que a colisão travou em algum lugar — o teste da travessia falha
+justamente nisso.
 
 **Partida inválida tem resgate.** Se o ponto de origem já está dentro da parede
 (separação entre personagens, empurrão de golpe, clamp da borda), a bisseção
