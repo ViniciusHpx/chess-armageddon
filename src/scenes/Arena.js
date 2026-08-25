@@ -280,12 +280,14 @@ export class Arena extends Phaser.Scene {
     async connect() {
         const endpoint = resolveEndpoint();
 
+        // O lobby já decidiu: criar uma sala (com os bots pedidos) ou entrar
+        // numa existente. `joinOrCreate` continua sendo o caminho de quem
+        // chegou sem passar pelo lobby (por exemplo, se ele ficou fora do ar).
+        // Fica fora do `try` porque o tratamento do erro depende dela.
+        const escolha = resolveJoinChoice();
+
         try {
             const client = new Colyseus.Client(endpoint);
-            // O lobby já decidiu: criar uma sala (com os bots pedidos) ou entrar
-            // numa existente. `joinOrCreate` continua sendo o caminho de quem
-            // chegou sem passar pelo lobby (por exemplo, se ele ficou fora do ar).
-            const escolha = resolveJoinChoice();
             const name = resolvePlayerName();
 
             if (escolha && escolha.roomId) {
@@ -305,6 +307,21 @@ export class Arena extends Phaser.Scene {
             // lobby, que a essa altura já recebeu a sala como cheia.
             if (error && error.code === 4001) {
                 this.statusText.setText('Sala cheia.\nRecarregue a pagina para escolher outra.');
+                return;
+            }
+
+            // Entrar por id (revanche ou `?room=`) e falhar quase sempre é sala
+            // que já não existe — encerrada, ou descartada por ter ficado vazia.
+            // O servidor derruba a conexão nesse caso e o navegador acusa CORS;
+            // o que importa para quem joga é voltar ao lobby em vez de ficar
+            // olhando "Failed to fetch".
+            if (escolha && escolha.roomId) {
+                this.statusText.setText(
+                    error && error.code === 4002
+                        ? 'Essa partida já acabou.\nVoltando ao lobby...'
+                        : 'Sala indisponível (pode ter sido encerrada).\nVoltando ao lobby...'
+                );
+                this.time.delayedCall(2500, () => reloadIntoLobby());
                 return;
             }
 

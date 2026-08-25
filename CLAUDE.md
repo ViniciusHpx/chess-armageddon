@@ -614,6 +614,20 @@ o MENU faz o oposto (`reloadIntoLobby`, tira o `?room=`). Recarregar em vez de
 reiniciar a cena não deixa resto de conexão nem de listener da partida
 anterior.
 
+**A sala nova precisa esperar o recarregamento.** Sala criada e vazia se
+descarta sozinha em 15 s (`seatReservationTimeout`) — menos do que leva
+recarregar Phaser e a arte. Por isso o `onCreate` desliga o `autoDispose` e um
+`clock.setTimeout` o devolve depois de `ROOM_JOIN_GRACE_SECONDS` (90 s); quem
+entra religa na hora. Sem isso a revanche morria antes de o jogador chegar, e o
+sintoma era enganoso: `joinById` numa sala inexistente faz a borda devolver
+**522**, e a página de erro dela não traz `Access-Control-Allow-Origin` — o
+navegador acusa **CORS**, como no caso da máscara de colisão. `/health`
+respondendo 200 e `joinOrCreate` funcionando, com só o `joinById` falhando, é a
+assinatura desse caso.
+
+Falhar ao entrar por id não deixa mais o jogador olhando "Failed to fetch": a
+`Arena` avisa e volta ao lobby sozinha.
+
 **O time oposto sai de graça**: o `pickTeam()` que já existia escolhe o time com
 menos humanos, então o segundo a chegar na sala da revanche cai no lado
 contrário ao do primeiro. Não há regra de "dois jogadores" em lugar nenhum.
