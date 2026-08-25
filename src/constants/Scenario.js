@@ -16,3 +16,18 @@ export const WORLD_HEIGHT = 1684
 export const SPAWN_ZONE = { minX: 150, maxX: 900, minY: 560, maxY: 1400 }
 
 export const SPAWN_ATTEMPTS = 40
+
+/**
+ * O ponto está dentro do castelo deste time? Espelha `insideSpawnZone` do
+ * servidor: a zona do `enemy` é o espelho em X, e qualquer outro time (o
+ * `'human'` do modo offline, que joga pelos aliados) usa a da esquerda —
+ * mesma convenção de `skinKey` e de `MapCollider.findSpawn`.
+ */
+export function insideSpawnZone(team, x, y) {
+    const bruteX = team === 'enemy' ? WORLD_WIDTH - x : x
+    return bruteX >= SPAWN_ZONE.minX && bruteX <= SPAWN_ZONE.maxX
+        && y >= SPAWN_ZONE.minY && y <= SPAWN_ZONE.maxY
+}
+
+/** Vida por segundo recuperada no próprio castelo (espelha o servidor). */
+export const BASE_HEAL_PER_SECOND = 20

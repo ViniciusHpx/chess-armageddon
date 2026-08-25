@@ -233,11 +233,15 @@
         <div id="game-container"></div>
 
         <!--
-            Tela de nome. Fica visível antes do Phaser subir; `NameGate.js` a
-            esconde assim que o jogador confirma. Marcada como `hidden` no
-            modo offline e quando veio `?name=` na URL.
+            Tela de nome. Nasce ESCONDIDA e quem a mostra é o
+            `askPlayerName()` de `NameGate.js`, só quando ainda não há nome.
+
+            Começar visível fazia a tela piscar em toda carga de página que já
+            tinha nome — o F5 e, principalmente, a revanche, que entra na sala
+            nova recarregando a página: o navegador pintava a tela de nome até
+            o `main.js` rodar e escondê-la.
         -->
-        <div id="name-gate">
+        <div id="name-gate" hidden>
             <h1>CHESS ARMAGEDDON</h1>
             <label for="name-input">Seu nome na arena</label>
             <input id="name-input" type="text" maxlength="16" autocomplete="off"

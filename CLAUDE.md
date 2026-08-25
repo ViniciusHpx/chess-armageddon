@@ -283,6 +283,18 @@ mapa, fora de parede e — no servidor — a pelo menos `SPAWN_MIN_DISTANCE` de 
 já está lá. É rejection sampling com teto de tentativas (`SPAWN_ATTEMPTS`), sem
 varrer o mapa e sem laço infinito quando o castelo enche.
 
+**O castelo cura o próprio time.** A mesma zona é a área de cura: quem está
+dentro dela recupera `BASE_HEAL_PER_SECOND` (20/s, peão cheio em 5 s) até o
+`maxHealth`, nunca além. A zona testada é sempre a do time do personagem, então
+a base inimiga não cura ninguém — `insideSpawnZone(team, x, y)` é a volta da
+conta de `placeAtSpawn` e existe nos dois lados (`constants.ts` e
+[Scenario.js](src/constants/Scenario.js)).
+
+Não há temporizador por jogador nem estado de "está curando": `World.healInBase`
+roda no tick (online) e `PlayerBase.healInBase` no `commonUpdate` (offline), e
+sair da base simplesmente para de curar no tick seguinte. A vida é do servidor —
+o cliente não tem como alegar que está na base.
+
 Uma pegadinha: no spawn o offset até o centro da elipse tem de sair da geometria
 do rank, **não** de `getEllipseCenter()` — aquele lê `body.center`, que só
 sincroniza no `preUpdate` seguinte, e a validação testaria o pixel errado.
@@ -426,6 +438,23 @@ só então gasta 220 ms empurrando o personagem, então corrigir contra ele ness
 intervalo puxava a previsão para trás e o dash rendia menos de um terço na tela.
 O salto por `SNAP_DISTANCE` continua ativo, para respawn no meio do dash não
 deixar a previsão presa.
+
+**O dash termina ao esbarrar em alguém.** Quem dashar contra outro personagem
+(aliado ou inimigo — a separação não olha time) para junto dele em vez de
+continuar empurrando pelo resto da distância. No servidor o `CollisionResolver`
+guarda em `separationX/Y` o quanto empurrou cada ator no tick, e o `World`
+cancela o dash quando esse empurrão é CONTRA o sentido do dash
+(`DASH_STOP_PUSHBACK`); empurrão a favor não conta, senão dashar para longe de
+quem está colado morreria na largada.
+
+O que arrastava o personagem para trás, porém, era a **previsão**: ela só
+consultava a máscara do mapa, então o boneco atravessava o outro e ia aos 220 px
+enquanto o servidor o segurava na metade do caminho. Como a reconciliação fica
+suspensa durante o dash, o erro (~100 px) só era cobrado no fim — e aí puxava
+tudo de volta de uma vez. Hoje `Arena.dashHitsActor()` faz o mesmo teste de
+elipses do resolver (Y × `ELLIPSE_RATIO`, distância entre centros) e encerra o
+dash local no contato; só bloqueia quem está à frente, comparando a distância
+nova com a atual.
 
 **Esquiva dos bots.** `World.tryBotDodge` (online) e `AIPlayer.tryDodge` (offline)
 usam a mesma regra: filtros baratos primeiro (cooldown → existe golpe inimigo em
@@ -638,6 +667,11 @@ A tela que pede o nome é **HTML** (marcação e CSS em [index.html](index.html)
 
 1. `InputManager` registra captura de Espaço e das setas; o Phaser chama `preventDefault()` nelas e o campo de texto perderia essas teclas. Antes do jogo existir, não há captura nenhuma.
 2. Um `<input>` de verdade abre o teclado virtual no celular — um campo desenhado no canvas não abre.
+
+A tela **nasce escondida** (`<div id="name-gate" hidden>`) e quem a mostra é o
+`askPlayerName()`. Começar visível fazia-a piscar em toda carga de página que já
+tinha nome — o F5 e, principalmente, a revanche, que entra na sala nova
+recarregando a página.
 
 Enquanto a tela está aberta o Phaser **ainda não subiu**: o `await askPlayerName()` no topo do módulo segura a criação do jogo. O `#name-gate` é opaco e cobre a tela inteira, então nada aparece atrás.
 

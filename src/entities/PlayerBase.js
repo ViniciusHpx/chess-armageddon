@@ -5,6 +5,7 @@ import {
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
 } from '../constants/Hierarchy.js';
+import { insideSpawnZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
 
@@ -437,6 +438,27 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.updateHealthBar();
     }
 
+    /**
+     * Cura contínua dentro do castelo do PRÓPRIO time — espelha o
+     * `World.healInBase` do servidor.
+     *
+     * Roda no `commonUpdate`, que toda entidade já chama todo quadro: não há
+     * temporizador por personagem nem estado de "está curando". Sair da base
+     * simplesmente para de curar no quadro seguinte, e a vida nunca passa de
+     * `maxHealth`. O castelo do outro time não cura: a zona testada é sempre a
+     * do time do próprio personagem.
+     */
+    healInBase(deltaMs) {
+        if (!this.active || this.currentHealth <= 0) return;
+        if (this.currentHealth >= this.maxHealth) return;
+        if (!insideSpawnZone(this.team, this.x, this.y)) return;
+
+        this.currentHealth = Math.min(
+            this.maxHealth,
+            this.currentHealth + BASE_HEAL_PER_SECOND * (deltaMs / 1000)
+        );
+    }
+
     createHealthBar() {
         const barWidth = 40;
         const barHeight = 5;
@@ -530,6 +552,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     /** @param {number} deltaMs Delta do quadro, vindo do `update` da cena. */
     commonUpdate(deltaMs = 0) {
         this.applyKnockback(deltaMs);
+        this.healInBase(deltaMs);
 
         this.setDepth(this.y);
         this.debugGraphics.setDepth(this.y - 1);

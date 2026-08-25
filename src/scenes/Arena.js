@@ -16,6 +16,7 @@ import {
 } from '../net/netconfig.js';
 import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 import MapCollider from '../utils/MapCollider.js';
+import { ELLIPSE_RATIO } from '../utils/CollisionResolver.js';
 
 /**
  * Cena multiplayer. Toda a regra do jogo mora em `chess-armageddon-server`;
@@ -701,9 +702,21 @@ export class Arena extends Phaser.Scene {
             // passaria do alvo: o servidor integra em ticks de 50 ms e o
             // cliente em quadros, e a diferença virava resto para reconciliar.
             const speed = Math.min(DASH_SPEED, this.localDashRemaining / dt);
-            this.localDashRemaining -= speed * dt;
-            this.predX += this.localDashDirX * speed * dt;
-            this.predY += this.localDashDirY * speed * dt;
+            const proxX = this.predX + this.localDashDirX * speed * dt;
+            const proxY = this.predY + this.localDashDirY * speed * dt;
+
+            if (this.dashHitsActor(localState, proxX, proxY)) {
+                // Esbarrou em alguém: o dash acaba aqui, encostado nele — a
+                // mesma regra do servidor. Sem isto a previsão atravessava o
+                // outro personagem e ia até os 220 px, e quando o dash acabava
+                // a reconciliação arrastava o boneco todo esse trecho de volta.
+                this.localDashRemaining = 0;
+                this.localDashUntil = 0;
+            } else {
+                this.localDashRemaining -= speed * dt;
+                this.predX = proxX;
+                this.predY = proxY;
+            }
         } else {
             // Golpe em curso: anda devagar; carregando, mais devagar ainda. Os
             // fatores são os mesmos do servidor (`movementFactor`), e a previsão
@@ -805,6 +818,44 @@ export class Arena extends Phaser.Scene {
             this.predX = corrigidoX;
             this.predY = corrigidoY;
         }
+    }
+
+    /**
+     * O passo do dash encosta em outro personagem?
+     *
+     * Reproduz o teste do `CollisionResolver` (dos dois lados): multiplicando Y
+     * por `ELLIPSE_RATIO`, toda elipse vira um círculo de raio `collisionRx` e
+     * a sobreposição é uma distância entre centros.
+     *
+     * Só bloqueia quem está À FRENTE — a posição candidata precisa estar mais
+     * perto do outro do que a atual. Quem começa o dash colado num aliado está
+     * sobreposto desde o primeiro quadro, e sem essa condição o dash morreria
+     * na largada em vez de tirar o personagem do aglomerado.
+     *
+     * Vale igual para aliado e inimigo: a separação corpo-a-corpo não olha
+     * time nenhum, e o dash aqui segue a mesma regra.
+     */
+    dashHitsActor(localState, x, y) {
+        const forma = this.formaLocal(localState);
+        const novoY = (y + forma.offsetY) * ELLIPSE_RATIO;
+        const atualY = (this.predY + forma.offsetY) * ELLIPSE_RATIO;
+
+        for (const [key, actor] of this.actors) {
+            if (key === this.room.sessionId) continue;
+            if (!actor.actorState.alive) continue;
+
+            const centro = actor.getEllipseCenter();
+            const centroY = centro.y * ELLIPSE_RATIO;
+            const minDist = forma.rx + actor.collisionRx;
+
+            const novo = Math.hypot(x - centro.x, novoY - centroY);
+            if (novo >= minDist) continue;
+
+            const atual = Math.hypot(this.predX - centro.x, atualY - centroY);
+            if (novo < atual) return true;
+        }
+
+        return false;
     }
 
     /**
