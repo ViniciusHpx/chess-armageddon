@@ -102,6 +102,11 @@ export class Start extends Phaser.Scene {
 
         if (!this.player._isDead) this.player.update(movement, attackState, dashState, delta);
 
+        // DEBUG: avança a peça no ciclo. Offline não há autoridade nenhuma —
+        // o próprio personagem é o estado —, então chama direto o mesmo
+        // `debugCycleRank` que o servidor chama no modo online.
+        if (this.inputs.getDebugState().justPressed) this.player.debugCycleRank();
+
         // Recarga do botão de dash. Offline o cooldown mora no próprio
         // personagem; online ele vem do servidor. O botão não sabe a diferença.
         this.inputs.setDashCooldown(this.player.dashCooldownRatio());

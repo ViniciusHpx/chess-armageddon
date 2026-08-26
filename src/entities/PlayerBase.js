@@ -1,5 +1,5 @@
 import {
-    levelFromRank, levelFromXp, rankKeyForLevel, XP_PER_KILL, XP_PER_LEVEL,
+    levelFromRank, levelFromXp, rankKeyForLevel, MAX_LEVEL, XP_PER_KILL, XP_PER_LEVEL,
     attackRecoveryMs, attackWindupMs, chargeAreaMult, chargeDamage, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey, canPhaseDash,
@@ -224,6 +224,19 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         const nivel = levelFromXp(this.xp);
         if (nivel <= this.level) return false;
 
+        this.applyLevel(nivel);
+        return true;
+    }
+
+    /**
+     * Vira a peça do nível pedido: rank, vida máxima, vida cheia e o pisca
+     * verde da promoção. Espelha `Actor.applyLevel` do servidor.
+     *
+     * É o corpo do que `addExperience` já fazia, isolado para a promoção de
+     * debug passar EXATAMENTE por aqui. Sprite, física da elipse, velocidade,
+     * alcance e forma do golpe saem todos de `setRank`/`applyRankPhysics`.
+     */
+    applyLevel(nivel) {
         this.setRank(RANKS[rankKeyForLevel(nivel)]);
         this.maxHealth = this._currentRank.health;
         this.currentHealth = this.maxHealth;
@@ -231,7 +244,31 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
         this.setTint(0x00ff00);
         this.scene.time.delayedCall(200, () => this.clearTint());
-        return true;
+    }
+
+    /**
+     * FERRAMENTA DE DEBUG: avança uma peça, e da rainha volta ao peão.
+     * Espelha `Actor.debugCycleRank` + `World.debugCycleRank` do servidor.
+     *
+     * A XP vai para o PISO do nível de destino (a conta de
+     * `resetProgressOnDeath`), então nada no caminho normal de XP é afrouxado:
+     * quem volta a peão volta com 0 e torna a subir matando.
+     *
+     * Golpe e carga em curso são cancelados — as duas máquinas guardam números
+     * derivados do rank, e trocar a peça no meio deixaria um golpe de rainha
+     * saindo de um peão. Não há guarda de posição aqui como no servidor: o
+     * `resolveMove` do `constrainPosition` já resgata partida inválida no
+     * quadro seguinte, que é justamente o caso de virar rainha num vão apertado.
+     */
+    debugCycleRank() {
+        if (!this.active || this.currentHealth <= 0) return;
+
+        if (this._isCharging) this.cancelCharge();
+        this.cancelDash();
+
+        const alvo = this.level >= MAX_LEVEL ? 1 : this.level + 1;
+        this.xp = (alvo - 1) * XP_PER_LEVEL;
+        this.applyLevel(alvo);
     }
 
     setRank(rankConfig) {

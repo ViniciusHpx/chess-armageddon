@@ -24,6 +24,13 @@ python -m http.server 8000   # depois abra http://localhost:8000
 
 Para jogar online, suba o servidor antes: `cd ../chess-armageddon-server && npm start`.
 
+**`npm start` roda `build/`, não `src/`** — mexeu no servidor, rode `npm run
+build` antes de subir, ou use `npm run dev` (tsx watch, lê o fonte). O sintoma
+de esquecer é traiçoeiro: o servidor sobe, conecta e joga normalmente, só que
+com o código antigo, e a mensagem nova simplesmente não faz nada — nenhum erro
+em lugar nenhum. `npm test` e `npm run typecheck` leem o fonte, então passar
+nos dois não garante que o que está no ar é aquilo.
+
 `colyseus.js` é cópia de `../chess-armageddon-server/node_modules/@colyseus/sdk/dist/colyseus.js`. Ao atualizar o SDK no servidor, copie de novo.
 
 ### Parâmetros de URL
@@ -257,7 +264,7 @@ navegável mas cercada por uma mureta invisível, e ninguém conseguia entrar no
 rio. Muralha de verdade não é tocada, porque o teste exige estar perto dos dois
 lados ao mesmo tempo.
 
-O script ainda faz uma terceira coisa: **limpa respingo**. A arte da água tem
+O script ainda faz mais duas coisas. A primeira: **limpa respingo**. A arte da água tem
 pontos escuros (pedrinha, sombra, espuma) que a máscara marcava como parede.
 Cada um deles é invisível na tela e proíbe uma área do **tamanho do corpo** —
 as nove sondas de `canStand` batem no respingo de até meio corpo de distância.
@@ -267,10 +274,24 @@ elipse do peão e cercados **só** de água viram água; ilha de verdade (grande
 que encoste em terra) não é tocada. Medido: travessias do rio com travamento
 caíram de 10/10 para 0/10, e nenhuma delas precisa mais do resgate.
 
-O resultado é revisável no editor de imagem e vai versionado; rodar de novo
-numa máscara já pintada dá o mesmo resultado. (Cuidado: `paint:water` **não** é
-idempotente — cada rodada come mais uma faixa de "praia", porque a água nova
-cria margem nova. Rode uma vez e revise o resultado.)
+A segunda: **descarta fundo**. O corte de tamanho separa rio e mar de telhado
+azul, que é pequeno — mas não separa de **céu**. O fundo atrás do castelo é
+azul na arte, está bloqueado na máscara e tem 45 029 px: passava no `MIN_AREA`
+e virava água navegável no canto superior esquerdo, num bolsão que ninguém
+alcança a pé. Quem separa não é tamanho, é topologia, no mesmo espírito do
+corte de `paint-bridges.mjs`: **água que não encosta em chão nenhum não é água,
+é fundo**, e volta a ser parede. Medido: mar 6132 pixels encostando em chão,
+rio 1290, céu 0 — a 194 px de qualquer chão, do outro lado da muralha. Roda por
+último de propósito: antes da praia o rio de verdade ainda está separado do
+chão e seria reprovado junto.
+
+O resultado é revisável no editor de imagem e vai versionado. **Cuidado:
+`paint:water` não é idempotente** — cada rodada come mais uma faixa de "praia",
+porque a água nova cria margem nova; medido, a segunda rodada mexe em 2343 px
+de margem espalhados pelo mapa. Rode uma vez e revise o resultado. Para
+corrigir só o fundo numa máscara já pintada existe `node scripts/paint-water.mjs
+--only-prune`, que pula os passos 1 a 4: ele só APAGA água sem contato com
+chão, não tem como criar água nova.
 
 ### As pontes: só pela cabeceira
 
@@ -748,7 +769,9 @@ meio-termo: perde-se só o progresso rumo à próxima peça (a aura continua
 zerando).
 
 No online o cliente **não tem mensagem** para XP, nível ou rank — o protocolo é
-só `"i"`, `"a"`, `"d"`, `"r"` e `"rm"`. `ActorState.xp` é escrita apenas pelo servidor.
+só `"i"`, `"a"`, `"d"`, `"r"`, `"rm"` e `"dbg"`. `ActorState.xp` é escrita apenas
+pelo servidor — inclusive no `"dbg"`, que é o botão DEBUG e também não carrega
+XP nem rank no corpo (ver *Botão DEBUG*, logo abaixo).
 
 A barra é a [XpBar](src/ui/XpBar.js), no padrão do `Scoreboard`: recebe uma
 função que devolve a XP total e cada cena liga na sua fonte (schema na `Arena`,
@@ -764,6 +787,47 @@ Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o 
 ### Input
 
 `InputManager` unifica teclado (WASD / setas + Espaço) e touch (joystick virtual + botão de ataque, ambos com `setScrollFactor(0)`) em duas saídas: `getMovementVector()` → `{dx, dy}` normalizado, e `getAttackState()` → `{held, justPressed, justReleased}`.
+
+### Botão DEBUG
+
+Botão roxo escrito DEBUG, ao lado do dash, nos dois modos: cada toque avança
+uma peça e da **rainha volta ao peão**, sem precisar de XP. É ferramenta de
+teste, e a cor e a palavra existem para ele não se confundir com mecânica —
+ataque é vermelho, dash é azul, e nenhum dos dois tem texto.
+
+Ele **não afrouxa nada no sistema de XP**. Quem promove é
+`Actor.debugCycleRank` (online) / `PlayerBase.debugCycleRank` (offline), e as
+duas fazem a mesma coisa: levam a XP ao **piso do nível de destino** (a conta
+de `resetProgressOnDeath`) e chamam o `applyLevel`, que é o corpo extraído do
+próprio `addExperience`. Ou seja, a promoção do botão e a do abate passam pela
+MESMA linha; ninguém zera requisito de XP em lugar nenhum, e quem volta a peão
+volta com 0 e torna a subir matando.
+
+A ordem é a de `RANK_ORDER` (`PAWN → TOWER → HORSE → BISHOP → QUEEN`), e o
+retorno ao peão é `level >= MAX_LEVEL ? 1 : level + 1` — sem lista nova e sem
+número cravado, então peça nova no `RANK_ORDER` entra no ciclo sozinha.
+
+**No online quem troca a peça é o servidor.** O cliente manda `"dbg"` **sem
+corpo**, como o dash: qual peça vem a seguir é decisão do `World`, não há o que
+o cliente inflar, e o rank volta pelo estado — os outros jogadores veem a troca
+pelo mesmo `ArenaActor.applyRank` da promoção por XP. Não há previsão local.
+
+Duas coisas ficam no `World.debugCycleRank`, porque são do mundo e não do ator:
+
+- **golpe e dash em curso são cancelados** — as duas máquinas guardam números
+  derivados do rank, e trocar a peça no meio deixaria um golpe de rainha saindo
+  de um peão;
+- **a posição é revalidada.** A rainha é maior que o peão (rx 62,5 contra 50),
+  então um peão encaixado num vão viraria rainha dentro da parede.
+  `nearestFree` — o resgate que já existe para estado quebrado — é usado aqui
+  ANTES de o estado quebrar, e sem saída a troca é recusada. Offline não
+  precisa: o `resolveMove` do `constrainPosition` já resgata partida inválida
+  no quadro seguinte.
+
+No cliente o botão não tem nada de próprio: é o mesmo `add.circle` interativo
+do dash, no mesmo `pointerdown`, e `getDebugState()` consome a borda igual a
+`getDashState()`. Na `Arena` a consulta fica no `update`, não no `sendInput` —
+aquele só roda com a partida em curso, e a borda ficaria presa até a próxima.
 
 ## Convenções
 

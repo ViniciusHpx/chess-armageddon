@@ -36,6 +36,20 @@ const DASH_BTN_DISABLED_ALPHA = 0.3;
 const DASH_TEXTURE = 'dash-icon';
 
 /**
+ * Botão de DEBUG: mesmo molde do dash (círculo + rótulo, `setScrollFactor(0)`,
+ * mesma faixa de profundidade), só que roxo e escrito DEBUG.
+ *
+ * A cor e a palavra existem para ele NÃO parecer mecânica do jogo: ataque é
+ * vermelho, dash é azul, e nenhum dos dois tem texto. Fica à esquerda do dash,
+ * fora do arco do polegar que aciona ataque e esquiva — apertar por engano no
+ * meio da briga trocaria a peça.
+ */
+const DEBUG_BTN_COLOR = 0x7a3fb0;
+const DEBUG_BTN_ALPHA = 0.7;
+const DEBUG_BTN_STROKE = 0x2c1046;
+const DEBUG_BTN_RADIUS = 30;
+
+/**
  * Passo mínimo do indicador de recarga para valer um redesenho.
  *
  * O `Graphics` do indicador é limpo e redesenhado, então redesenhar a cada
@@ -70,6 +84,7 @@ export default class InputManager {
         this.createVirtualJoystick(baseX, baseY, baseRadius, thumbRadius);
         this.createAttackButton();
         this.createDashButton();
+        this.createDebugButton();
 
         // Estado do ataque unificado
         this._attackHeld = false;
@@ -85,6 +100,9 @@ export default class InputManager {
         // botão que se segura como o de ataque.
         this._dashJustPressed = false;
         this._lastShiftDown = false;
+
+        // DEBUG: só borda de descida, como o dash — é um toque.
+        this._debugJustPressed = false;
 
         this.setupTouchEvents();
     }
@@ -194,6 +212,40 @@ export default class InputManager {
     }
 
     /**
+     * Botão de DEBUG, ao lado do de ataque.
+     *
+     * Reaproveita tudo o que o dash já usa — `add.circle` interativo,
+     * `setScrollFactor(0)`, `CONTROLS_DEPTH`, o mesmo `pointerdown` do
+     * `setupTouchEvents` — então não há componente, layout nem sistema de
+     * entrada novo. O rótulo é um `Text` comum: aqui, ao contrário da espada e
+     * das setas, texto serve, porque a palavra DEBUG é o ponto.
+     */
+    createDebugButton() {
+        const { width, height } = this.scene.cameras.main;
+        // Alinhado com o dash e à esquerda dele. A distância entre centros (83)
+        // é maior que a soma dos raios (64), então não há como acertar os dois
+        // com o mesmo toque.
+        const x = width - 268;
+        const y = height - 68;
+
+        this.debugBtn = this.scene.add.circle(x, y, DEBUG_BTN_RADIUS, DEBUG_BTN_COLOR, DEBUG_BTN_ALPHA)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(CONTROLS_DEPTH);
+        this.debugBtn.setStrokeStyle(3, DEBUG_BTN_STROKE, 0.9);
+
+        this.debugLabel = this.scene.add.text(x, y, 'DEBUG', {
+            fontSize: '11px',
+            fontStyle: 'bold',
+            color: '#ffffff',
+        })
+            .setOrigin(0.5)
+            .setScrollFactor(0)
+            .setDepth(CONTROLS_DEPTH + 1)
+            .setAlpha(0.95);
+    }
+
+    /**
      * Ícone do dash: duas setas de velocidade.
      *
      * Mesmo motivo da espada do ataque — não há arte em `assets/` e glifo de
@@ -285,6 +337,12 @@ export default class InputManager {
             // até `getDashState` consumir.
             if (!this.dashOnCooldown && this.dashBtn.getBounds().contains(pointer.x, pointer.y)) {
                 this._dashJustPressed = true;
+            }
+
+            // DEBUG: mesma trava de borda do dash, pelo mesmo motivo — um
+            // toque rápido começa e acaba entre dois quadros.
+            if (this.debugBtn.getBounds().contains(pointer.x, pointer.y)) {
+                this._debugJustPressed = true;
             }
         });
 
@@ -399,6 +457,16 @@ export default class InputManager {
     getDashState() {
         const state = { justPressed: this._dashJustPressed };
         this._dashJustPressed = false;
+        return state;
+    }
+
+    /**
+     * Consome o toque do botão DEBUG. Como `getDashState`, zera a borda —
+     * chame no máximo uma vez por quadro.
+     */
+    getDebugState() {
+        const state = { justPressed: this._debugJustPressed };
+        this._debugJustPressed = false;
         return state;
     }
 

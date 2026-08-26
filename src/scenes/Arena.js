@@ -496,6 +496,15 @@ export class Arena extends Phaser.Scene {
             actor.sync(now, predicted);
         }
 
+        // DEBUG: pede a troca de peça. Mensagem SEM corpo, como o dash — qual
+        // peça vem a seguir quem decide é o `World`. Nada é previsto aqui: o
+        // rank chega pelo estado e o `ArenaActor.applyRank` troca sprite e
+        // elipse, o mesmo caminho da promoção por XP.
+        //
+        // Fica no `update`, e não no `sendInput`: aquele só roda com a partida
+        // em curso, e a borda ficaria presa até a partida seguinte.
+        if (this.inputs.getDebugState().justPressed && this.room) this.room.send('dbg');
+
         this.inputs.setDashCooldown(this.dashCooldownRatio(localState));
         this.xpBar.update(time);
         this.updateTeamScore();
