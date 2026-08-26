@@ -6,6 +6,7 @@ import DeathScreen from '../ui/DeathScreen.js';
 import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
 import MapCollider from '../utils/MapCollider.js'; // Importação
+import { createHealZoneFx } from '../utils/HealZoneFx.js';
 import { COLLISION_PATH, ARENA_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 
 export class Start extends Phaser.Scene {
@@ -47,6 +48,10 @@ export class Start extends Phaser.Scene {
 
         this.add.image(0, 0, 'grass').setOrigin(0, 0); // Metade esquerda original
         this.add.image(HALF_WORLD_WIDTH, 0, 'grass').setOrigin(0, 0).setFlipX(true);
+
+        // Névoa verde nos dois castelos, marcando onde a base regenera vida.
+        // Sai da mesma `HEAL_ZONE` que decide a cura — ver HealZoneFx.js.
+        createHealZoneFx(this);
 
         // Grupos de times
         this.alliedPlayers = this.physics.add.group();

@@ -433,17 +433,52 @@ mapa, fora de parede e — no servidor — a pelo menos `SPAWN_MIN_DISTANCE` de 
 já está lá. É rejection sampling com teto de tentativas (`SPAWN_ATTEMPTS`), sem
 varrer o mapa e sem laço infinito quando o castelo enche.
 
-**O castelo cura o próprio time.** A mesma zona é a área de cura: quem está
-dentro dela recupera `BASE_HEAL_PER_SECOND` (20/s, peão cheio em 5 s) até o
-`maxHealth`, nunca além. A zona testada é sempre a do time do personagem, então
-a base inimiga não cura ninguém — `insideSpawnZone(team, x, y)` é a volta da
-conta de `placeAtSpawn` e existe nos dois lados (`constants.ts` e
-[Scenario.js](src/constants/Scenario.js)).
+**O castelo cura o próprio time**, mas NÃO na zona de nascimento inteira. A
+área de cura é a `HEAL_ZONE` — um retângulo próprio, no fundo do pátio, e não a
+`SPAWN_ZONE`. As duas existem nos dois lados (`constants.ts` e
+[Scenario.js](src/constants/Scenario.js)) e servem a coisas diferentes:
+
+| | `SPAWN_ZONE` | `HEAL_ZONE` |
+| --- | --- | --- |
+| Retângulo (metade esquerda) | x 150..900, y 560..1400 | x 220..840, y 540..980 |
+| Para que serve | sorteio de nascimento | regeneração de vida |
+| Por que esse tamanho | generoso: a máscara valida cada sorteio | recuado: o portão tem de ficar de fora |
+
+A `SPAWN_ZONE` transborda a muralha sul — chega ao campo aberto abaixo do
+castelo —, e curar ali significava curar na porta e até fora dela. Medida na
+máscara com uma busca em largura a partir do campo aberto, ela tem pontos a
+**808 px** de caminhada do lado de fora; o ponto menos profundo da `HEAL_ZONE`
+está a **1672 px**, e o corredor do portão (x 192..456, y 1176..1300) fica
+inteiro fora. O teste "a área de cura fica no fundo do pátio, longe do portão"
+refaz essa medição, então mudar a arte do castelo sem mexer na zona quebra o
+teste em vez de passar despercebido.
+
+Quem está dentro recupera `BASE_HEAL_PER_SECOND` (**12/s** — peão cheio em
+8,3 s, torre em 16,7 s) até o `maxHealth`, nunca além. Era 20/s. A zona testada
+é sempre a do time do personagem, então a base inimiga não cura ninguém —
+`insideHealZone(team, x, y)` faz o mesmo espelhamento em X do resto do mapa.
 
 Não há temporizador por jogador nem estado de "está curando": `World.healInBase`
 roda no tick (online) e `PlayerBase.healInBase` no `commonUpdate` (offline), e
 sair da base simplesmente para de curar no tick seguinte. A vida é do servidor —
 o cliente não tem como alegar que está na base.
+
+**A névoa verde é a zona.** [HealZoneFx.js](src/utils/HealZoneFx.js) desenha a
+`HEAL_ZONE` e o espelho dela: dois `Image` no mundo (um por castelo), uma
+textura de 155 × 110 gerada uma vez por canvas, no molde do `aura-particle`.
+Não há partícula, shader, `Graphics` por quadro nem nada por jogador — só um
+tween de opacidade por castelo. Os dois modos chamam `createHealZoneFx(scene)`
+logo depois de colocar a arte do mapa.
+
+A textura é transparente no miolo e verde só numa faixa esfumaçada junto da
+borda (o alfa cai de 0,54 a 0 dentro de `BANDA`, modulado por um ruído de
+semente fixa), em `BlendModes.ADD` e depth 1 — acima da arte, abaixo de
+qualquer personagem, que usa `setDepth(y)`.
+
+Área desenhada e área que cura são **o mesmo número**: o `Image` recebe o
+centro e o tamanho lidos de `HEAL_ZONE`, então mover a zona move a névoa sem
+tocar no `HealZoneFx`. Nada de constante de desenho paralela — foi assim que se
+evitou o clássico "o verde diz uma coisa e a cura faz outra".
 
 Uma pegadinha: no spawn o offset até o centro da elipse tem de sair da geometria
 do rank, **não** de `getEllipseCenter()` — aquele lê `body.center`, que só

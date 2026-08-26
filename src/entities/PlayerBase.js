@@ -5,7 +5,7 @@ import {
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey, canPhaseDash,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
 } from '../constants/Hierarchy.js';
-import { insideSpawnZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
+import { insideHealZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
 
@@ -496,7 +496,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     healInBase(deltaMs) {
         if (!this.active || this.currentHealth <= 0) return;
         if (this.currentHealth >= this.maxHealth) return;
-        if (!insideSpawnZone(this.team, this.x, this.y)) return;
+        if (!insideHealZone(this.team, this.x, this.y)) return;
 
         this.currentHealth = Math.min(
             this.maxHealth,

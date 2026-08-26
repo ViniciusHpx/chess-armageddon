@@ -17,6 +17,7 @@ import {
 } from '../net/netconfig.js';
 import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 import MapCollider from '../utils/MapCollider.js';
+import { createHealZoneFx } from '../utils/HealZoneFx.js';
 import { ELLIPSE_RATIO } from '../utils/CollisionResolver.js';
 
 /**
@@ -125,6 +126,10 @@ export class Arena extends Phaser.Scene {
 
         this.add.image(0, 0, 'grass').setOrigin(0, 0);
         this.add.image(HALF_WORLD_WIDTH, 0, 'grass').setOrigin(0, 0).setFlipX(true);
+
+        // Névoa verde nos dois castelos, marcando onde a base regenera vida.
+        // Sai da mesma `HEAL_ZONE` que o servidor usa para curar.
+        createHealZoneFx(this);
 
         this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
         this.cameras.main.centerOn(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
