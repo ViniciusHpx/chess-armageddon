@@ -6,7 +6,7 @@ import Scoreboard from '../ui/Scoreboard.js';
 import XpBar from '../ui/XpBar.js';
 import {
     movementFactor, attackRecoveryMs, attackWindupMs, chargePower,
-    canPhaseDash, CHARGED_ATTACK_ENABLED,
+    canPhaseDash, CHARGED_ATTACK_ENABLED, ATTACK_INTERVAL,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_SPEED, DASH_TIMEOUT_MS,
     GAME_MODES, RANKS, RANK_ORDER, TEAM_KILL_LIMIT, TEAM_ORDER
 } from '../constants/Hierarchy.js';
@@ -147,6 +147,11 @@ export class Arena extends Phaser.Scene {
 
         this.lastSentDx = 0;
         this.lastSentDy = 0;
+        // Última MIRA enviada. Entra na detecção de mudança junto com o
+        // movimento: girar o controle de ataque manda pacote na hora, em vez de
+        // esperar a próxima janela fixa.
+        this.lastSentAx = 0;
+        this.lastSentAy = 0;
         this.lastInputSentAt = 0;
 
         // Reconciliação: número do pacote de entrada e o histórico do que cada
@@ -268,18 +273,25 @@ export class Arena extends Phaser.Scene {
         room.leave();
     }
 
-    /** Zera movimento e carga no servidor. Usado ao perder o foco da aba. */
+    /** Zera movimento, mira e ataque no servidor. Usado ao perder o foco da aba. */
     haltInput() {
         if (!this.room) return;
 
-        this.sendInputPacket(0, 0, performance.now());
+        this.sendInputPacket(0, 0, performance.now(), 0, 0);
 
         if (this.localCharging) {
             this.localCharging = false;
             this.localAttackPending = true;
             this.localAttackSentAt = this.time.now;
-            this.room.send('a', 0);
         }
+
+        // O `"a" 0` sai SEMPRE, não só quando havia carga: com o ataque
+        // contínuo ele também é o "soltei o botão", e é o que impede o
+        // personagem de continuar batendo sozinho com a aba em segundo plano.
+        // O servidor tem a própria rede de segurança (INPUT_TIMEOUT_MS), mas
+        // ela só age depois de 2 s. Repetir a mensagem é inofensivo: sem carga
+        // em curso, `releaseAttack` sai na primeira linha.
+        this.room.send('a', 0);
     }
 
     /** Textura da partícula de aura: criada uma vez e reusada por todos. */
@@ -559,37 +571,58 @@ export class Arena extends Phaser.Scene {
      */
     sendInput(localState, now) {
         const { dx, dy } = this.inputs.getMovementVector();
+        // MIRA do ataque: vai no mesmo pacote do movimento, então o golpe e o
+        // dash leem a mesma "última entrada recebida" no servidor e não há
+        // mensagem nova no protocolo.
+        const { ax, ay } = this.inputs.getAttackVector();
 
         const desde = now - this.lastInputSentAt;
         const mudou = Math.abs(dx - this.lastSentDx) > INPUT_EPSILON ||
-            Math.abs(dy - this.lastSentDy) > INPUT_EPSILON;
+            Math.abs(dy - this.lastSentDy) > INPUT_EPSILON ||
+            Math.abs(ax - this.lastSentAx) > INPUT_EPSILON ||
+            Math.abs(ay - this.lastSentAy) > INPUT_EPSILON;
 
         if (desde >= INPUT_SEND_MS || (mudou && desde >= INPUT_MIN_GAP_MS)) {
-            this.sendInputPacket(dx, dy, now);
+            this.sendInputPacket(dx, dy, now, ax, ay);
         }
 
         const attack = this.inputs.getAttackState();
 
-        if (attack.justPressed && localState.alive && this.time.now >= this.localAttackReadyAt) {
+        // Gate LOCAL do golpe, espelho do `attackReadyAt` do servidor. Vale só
+        // para a previsão — quem decide se o golpe sai é o servidor.
+        const podeGolpear = localState.alive && this.time.now >= this.localAttackReadyAt;
+
+        // O aperto é RELATO DE ENTRADA, não pedido de golpe: ele é o que diz ao
+        // servidor "estou segurando o botão", e é disso que o ataque contínuo
+        // vive. Por isso não passa pelo gate local — um toque que caia dentro
+        // da recuperação seria engolido aqui, o servidor nunca saberia do
+        // "segurando", e a repetição jamais começaria.
+        if (attack.justPressed && localState.alive) {
             this.room.send('a', 1);
 
-            if (CHARGED_ATTACK_ENABLED) {
+            // A carga local, essa sim, respeita o gate: acender o indicador
+            // numa carga que o servidor vai recusar mostraria brilho fantasma.
+            if (CHARGED_ATTACK_ENABLED && podeGolpear) {
                 this.localCharging = true;
                 this.localChargeStart = this.time.now;
-            } else {
-                // Sem ataque carregado o servidor já solta o golpe leve no
-                // aperto (`World.startCharge`); a previsão precisa desacelerar
-                // no mesmo instante, senão a reconciliação desfaz o trecho
-                // andado a mais — o passo para trás a cada golpe.
-                this.localAttackPending = true;
-                this.localAttackSentAt = this.time.now;
-                this.localAttackReadyAt = this.time.now
-                    + attackWindupMs(0) + attackRecoveryMs(0);
             }
         }
 
+        // ATAQUE CONTÍNUO: nenhuma mensagem sai daqui. Quem repete o golpe é o
+        // servidor, que sabe do "segurando" desde o `"a" 1` acima (ver
+        // `World.stepPlayer`) — reenviar por intervalo só gastaria banda e o
+        // `maxMessagesPerSecond` da sala.
+        //
+        // O que se faz aqui é acompanhar o MESMO ritmo localmente, porque a
+        // previsão precisa desacelerar nos mesmos instantes; sem isso a
+        // reconciliação desfaria o trecho andado a mais a cada repetição. Cobre
+        // também o quadro do aperto, em que `held` já é verdadeiro.
+        if (!CHARGED_ATTACK_ENABLED && attack.held && podeGolpear) {
+            this.beginLocalAttack();
+        }
+
         const dash = this.inputs.getDashState();
-        if (dash.justPressed) this.tryDash(localState, dx, dy, now);
+        if (dash.justPressed) this.tryDash(localState, dx, dy, now, ax, ay);
 
         if (attack.justReleased) {
             if (this.localCharging && localState.alive) {
@@ -611,6 +644,28 @@ export class Arena extends Phaser.Scene {
     }
 
     /**
+     * Marca um golpe leve na previsão local.
+     *
+     * A previsão desacelera a partir do ENVIO, não da confirmação: entre uma
+     * coisa e outra passa um RTT em que o servidor já parou o personagem e o
+     * cliente ainda andava, e esse trecho era desfeito pela reconciliação — o
+     * passo para trás a cada golpe.
+     *
+     * A conta do gate é a mesma de `World.beginAttack`, incluindo o piso de
+     * `ATTACK_INTERVAL`. Não é autoridade nenhuma: se ela e o servidor
+     * discordarem, o servidor recusa o golpe e o resto é a divergência normal
+     * que a reconciliação já absorve.
+     */
+    beginLocalAttack() {
+        this.localAttackPending = true;
+        this.localAttackSentAt = this.time.now;
+        this.localAttackReadyAt = this.time.now + Math.max(
+            attackWindupMs(0) + attackRecoveryMs(0),
+            ATTACK_INTERVAL
+        );
+    }
+
+    /**
      * Pede um dash ao servidor e já começa a prever o movimento.
      *
      * As condições testadas aqui são as MESMAS do `World.requestDash`, lidas do
@@ -623,12 +678,12 @@ export class Arena extends Phaser.Scene {
      * falando do mesmo vetor. Como o transporte preserva a ordem, o `i` chega
      * primeiro.
      */
-    tryDash(localState, dx, dy, now) {
+    tryDash(localState, dx, dy, now, ax, ay) {
         if (!localState.alive || localState.attacking || this.localAttackPending) return;
         if (localState.dashCd > 0 || this.time.now < this.localDashReadyAt) return;
 
 
-        this.sendInputPacket(dx, dy, now);
+        this.sendInputPacket(dx, dy, now, ax, ay);
         this.room.send('d');
 
         let dirX = dx;
@@ -682,7 +737,7 @@ export class Arena extends Phaser.Scene {
      * estava valendo, ou seja, do pacote `inputSeq`; ele vai para o histórico
      * sob esse número e uma janela nova começa zerada.
      */
-    sendInputPacket(dx, dy, now) {
+    sendInputPacket(dx, dy, now, ax = 0, ay = 0) {
         if (this.inputSeq > 0) {
             this.pendingInputs.push({ seq: this.inputSeq, ddx: this.segDx, ddy: this.segDy });
             if (this.pendingInputs.length > INPUT_HISTORY_MAX) this.pendingInputs.shift();
@@ -691,10 +746,14 @@ export class Arena extends Phaser.Scene {
         this.segDy = 0;
 
         this.inputSeq++;
-        this.room.send('i', { dx, dy, s: this.inputSeq });
+        // `ax`/`ay` (a mira) não entram na reconciliação: eles não movem o
+        // personagem, só escolhem para onde o golpe sai.
+        this.room.send('i', { dx, dy, s: this.inputSeq, ax, ay });
 
         this.lastSentDx = dx;
         this.lastSentDy = dy;
+        this.lastSentAx = ax;
+        this.lastSentAy = ay;
         this.lastInputSentAt = now;
     }
 

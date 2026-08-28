@@ -58,9 +58,107 @@ const DEBUG_BTN_RADIUS = 30;
  */
 const DASH_CD_STEP = 0.02;
 
+/**
+ * Raio do miolo arrastável do controle de ataque.
+ *
+ * O controle ocupa o mesmo lugar e o mesmo tamanho do botão que ele substitui
+ * (raio 50), então a distância até o botão de dash continua sendo maior que a
+ * soma dos raios — não há como acertar os dois com o mesmo toque.
+ */
+const ATTACK_STICK_THUMB = 26;
+
+/**
+ * Um controle virtual arrastável: base fixa + miolo que segue o dedo.
+ *
+ * É a mesma mecânica que o joystick de movimento sempre teve, extraída porque
+ * agora existem DOIS controles e reescrevê-la duas vezes deixaria os dois
+ * divergindo (e é onde entraria a duplicação que o joystick de ataque não
+ * precisa ter).
+ *
+ * A diferença que importa em relação ao código antigo é o `pointerId`: cada
+ * controle guarda QUAL dedo o pegou e só reage àquele. Sem isso, o `pointerup`
+ * de um dedo zerava o outro controle — o que já acontecia ao soltar o botão de
+ * ataque (o joystick de movimento parava junto) e ficaria fatal agora, que os
+ * dois são usados ao mesmo tempo.
+ */
+class VirtualStick {
+    /**
+     * @param {number} x Centro da base.
+     * @param {number} y Centro da base.
+     * @param {number} baseRadius
+     * @param {number} thumbRadius
+     * @param {number} grabRadius Distância do centro em que um toque pega o controle.
+     */
+    constructor(x, y, baseRadius, thumbRadius, grabRadius) {
+        this.baseX = x;
+        this.baseY = y;
+        this.maxDist = baseRadius - thumbRadius;
+        this.grabRadius = grabRadius;
+
+        this.active = false;
+        this.force = { x: 0, y: 0 };
+        /** Dedo que está usando este controle; null = nenhum. */
+        this.pointerId = null;
+    }
+
+    /** Este toque pega o controle? */
+    grabs(pointer) {
+        if (this.active) return false;
+        const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, this.baseX, this.baseY);
+        return dist <= this.grabRadius;
+    }
+
+    grab(pointer) {
+        this.active = true;
+        this.pointerId = pointer.id;
+        this.moveTo(pointer);
+    }
+
+    /** O evento é deste controle? */
+    owns(pointer) {
+        return this.active && this.pointerId === pointer.id;
+    }
+
+    moveTo(pointer) {
+        let dx = pointer.x - this.baseX;
+        let dy = pointer.y - this.baseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > this.maxDist) {
+            dx = (dx / dist) * this.maxDist;
+            dy = (dy / dist) * this.maxDist;
+        }
+
+        this.thumbX = this.baseX + dx;
+        this.thumbY = this.baseY + dy;
+        this.force = { x: dx / this.maxDist, y: dy / this.maxDist };
+        this.redraw();
+    }
+
+    release() {
+        this.active = false;
+        this.pointerId = null;
+        this.force = { x: 0, y: 0 };
+        this.thumbX = this.baseX;
+        this.thumbY = this.baseY;
+        this.redraw();
+    }
+
+    /** Reposiciona os objetos de tela. Sobrescrito por quem tem mais camadas. */
+    redraw() {
+        if (this.thumb) this.thumb.setPosition(this.thumbX, this.thumbY);
+    }
+}
+
 export default class InputManager {
     constructor(scene) {
         this.scene = scene;
+
+        // Dois controles ao mesmo tempo exigem dois dedos, e o Phaser nasce com
+        // um só ponteiro de toque ativo (`activePointers`). Sem isto, o segundo
+        // dedo simplesmente não gera evento nenhum e o ataque direcional não
+        // funcionaria no celular.
+        scene.input.addPointer(2);
 
         // Teclado
         this.cursors = scene.input.keyboard.createCursorKeys();
@@ -70,19 +168,8 @@ export default class InputManager {
         this.spaceKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
         this.dashKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
 
-        // Joystick virtual
-        this.joystickActive = false;
-        this.joystickForce = { x: 0, y: 0 };
-        const baseX = 120;
-        const baseY = scene.cameras.main.height - 120;
-        const baseRadius = 60;
-        const thumbRadius = 30;
-        this.joystickBaseX = baseX;
-        this.joystickBaseY = baseY;
-        this.joystickMaxDist = baseRadius - thumbRadius;
-
-        this.createVirtualJoystick(baseX, baseY, baseRadius, thumbRadius);
-        this.createAttackButton();
+        this.createVirtualJoystick(120, scene.cameras.main.height - 120, 60, 30);
+        this.createAttackStick();
         this.createDashButton();
         this.createDebugButton();
 
@@ -91,7 +178,6 @@ export default class InputManager {
         this._attackJustPressed = false;
         this._attackJustReleased = false;
 
-        this._touchAttackDown = false;       // dedo no botão de ataque (touch)
         this._prevTouchAttackDown = false;   // estado anterior para detecção de borda
 
         this._lastSpaceDown = false;         // estado anterior do espaço
@@ -108,6 +194,10 @@ export default class InputManager {
     }
 
     createVirtualJoystick(x, y, baseR, thumbR) {
+        // O raio de pega é o de sempre (`maxDist + 50`): o joystick de
+        // movimento continua tão tolerante quanto era.
+        this.moveStick = new VirtualStick(x, y, baseR, thumbR, (baseR - thumbR) + 50);
+
         this.joystickBase = this.scene.add.circle(x, y, baseR, 0xffffff, 0.3);
         this.joystickBase.setScrollFactor(0);
         this.joystickBase.setDepth(CONTROLS_DEPTH);
@@ -115,31 +205,58 @@ export default class InputManager {
         this.joystickThumb = this.scene.add.circle(x, y, thumbR, 0xffffff, 0.6);
         this.joystickThumb.setScrollFactor(0);
         this.joystickThumb.setDepth(CONTROLS_DEPTH + 1);
+
+        this.moveStick.thumb = this.joystickThumb;
+        this.moveStick.release();
     }
 
-    createAttackButton() {
+    /**
+     * Controle de ATAQUE: o botão vermelho virou um joystick.
+     *
+     * Toca e ataca (como antes), arrasta e escolhe a direção, segura e o golpe
+     * se repete — o ritmo é do `ATTACK_INTERVAL`, no servidor. Fica no mesmo
+     * lugar, com o mesmo tamanho e a mesma cor do botão que substitui, então
+     * quem só toca nem percebe a diferença.
+     *
+     * O ícone de espada anda com o miolo: é o retorno visual da direção
+     * escolhida, sem nada novo desenhado por quadro.
+     */
+    createAttackStick() {
         const { width, height } = this.scene.cameras.main;
         const x = width - 100;
         const y = height - 120;
         const raio = 50;
 
-        this.attackBtn = this.scene.add.circle(x, y, raio, ATTACK_BTN_COLOR, ATTACK_BTN_ALPHA)
-            .setInteractive()
+        // Raio de pega = o próprio raio do controle. Maior que isso invadiria o
+        // botão de dash, que está a ~100 px do centro daqui.
+        this.attackStick = new VirtualStick(x, y, raio, ATTACK_STICK_THUMB, raio);
+
+        this.attackBase = this.scene.add.circle(x, y, raio, ATTACK_BTN_COLOR, ATTACK_BTN_ALPHA)
             .setScrollFactor(0)
             .setDepth(CONTROLS_DEPTH);
-        this.attackBtn.setStrokeStyle(3, ATTACK_BTN_STROKE, 0.9);
+        this.attackBase.setStrokeStyle(3, ATTACK_BTN_STROKE, 0.9);
+
+        this.attackThumb = this.scene.add.circle(x, y, ATTACK_STICK_THUMB, ATTACK_BTN_COLOR, 0.95)
+            .setScrollFactor(0)
+            .setDepth(CONTROLS_DEPTH + 1);
+        this.attackThumb.setStrokeStyle(2, ATTACK_BTN_STROKE, 0.9);
 
         this.createSwordTexture();
 
         // Espada na diagonal: em pé ela some no meio do círculo.
         this.attackIcon = this.scene.add.image(x, y, SWORD_TEXTURE)
             .setScrollFactor(0)
-            .setDepth(CONTROLS_DEPTH + 1)
+            .setDepth(CONTROLS_DEPTH + 2)
             .setAngle(-45)
             .setScale(0.78)
             .setAlpha(0.95);
 
-        // A lógica de ataque é gerenciada via estado, não diretamente aqui
+        // O miolo e o ícone andam juntos.
+        this.attackStick.redraw = () => {
+            this.attackThumb.setPosition(this.attackStick.thumbX, this.attackStick.thumbY);
+            this.attackIcon.setPosition(this.attackStick.thumbX, this.attackStick.thumbY);
+        };
+        this.attackStick.release();
     }
 
     /**
@@ -316,17 +433,13 @@ export default class InputManager {
     }
 
     setupTouchEvents() {
-        // Joystick e ataque
+        // Os dois controles são arrastáveis e podem estar em uso ao mesmo
+        // tempo, então cada evento é roteado pelo id do DEDO — ver
+        // `VirtualStick.owns`. Os raios de pega não se sobrepõem, então um
+        // toque nunca pega os dois.
         this.scene.input.on('pointerdown', (pointer) => {
-            const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, this.joystickBaseX, this.joystickBaseY);
-            if (dist <= this.joystickMaxDist + 50) {
-                this.joystickActive = true;
-                this.updateJoystickPosition(pointer);
-            }
-
-            if (this.attackBtn.getBounds().contains(pointer.x, pointer.y)) {
-                this._touchAttackDown = true;
-            }
+            if (this.moveStick.grabs(pointer)) this.moveStick.grab(pointer);
+            else if (this.attackStick.grabs(pointer)) this.attackStick.grab(pointer);
 
             // Em recarga o toque é ignorado aqui mesmo: no online o servidor
             // recusaria de qualquer forma, e assim nem se gasta a mensagem.
@@ -347,57 +460,54 @@ export default class InputManager {
         });
 
         this.scene.input.on('pointermove', (pointer) => {
-            if (this.joystickActive) {
-                this.updateJoystickPosition(pointer);
-            }
+            if (this.moveStick.owns(pointer)) this.moveStick.moveTo(pointer);
+            if (this.attackStick.owns(pointer)) this.attackStick.moveTo(pointer);
         });
 
-        this.scene.input.on('pointerup', (pointer) => {
-            this.joystickActive = false;
-            this.joystickThumb.setPosition(this.joystickBaseX, this.joystickBaseY);
-            this.joystickForce = { x: 0, y: 0 };
+        // `pointerup` e `pointerupoutside` largam SÓ o controle daquele dedo.
+        // Antes os dois zeravam o joystick de movimento sem olhar de quem era o
+        // evento, então soltar o botão de ataque parava o personagem.
+        const solta = (pointer) => {
+            if (this.moveStick.owns(pointer)) this.moveStick.release();
+            if (this.attackStick.owns(pointer)) this.attackStick.release();
+        };
 
-            if (this._touchAttackDown) {
-                this._touchAttackDown = false;
-            }
-        });
+        this.scene.input.on('pointerup', solta);
+        this.scene.input.on('pointerupoutside', solta);
 
-        this.scene.input.on('pointerupoutside', (pointer) => {
-            this.joystickActive = false;
-            this.joystickThumb.setPosition(this.joystickBaseX, this.joystickBaseY);
-            this.joystickForce = { x: 0, y: 0 };
-
-            if (this._touchAttackDown) {
-                this._touchAttackDown = false;
-            }
-        });
+        // Perder o foco com o dedo na tela não gera `pointerup`: sem isto os
+        // controles ficariam presos e o personagem sairia andando e batendo
+        // sozinho ao voltar. Espelha o `haltInput` das cenas.
+        this._onBlur = () => {
+            this.moveStick.release();
+            this.attackStick.release();
+        };
+        this.scene.game.events.on(Phaser.Core.Events.BLUR, this._onBlur);
+        this.scene.game.events.on(Phaser.Core.Events.HIDDEN, this._onBlur);
+        this.scene.events.once('shutdown', () => this.destroy());
     }
 
-    updateJoystickPosition(pointer) {
-        let dx = pointer.x - this.joystickBaseX;
-        let dy = pointer.y - this.joystickBaseY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist > this.joystickMaxDist) {
-            dx = (dx / dist) * this.joystickMaxDist;
-            dy = (dy / dist) * this.joystickMaxDist;
-        }
-
-        this.joystickThumb.setPosition(this.joystickBaseX + dx, this.joystickBaseY + dy);
-
-        this.joystickForce = {
-            x: dx / this.joystickMaxDist,
-            y: dy / this.joystickMaxDist
-        };
+    /**
+     * Solta os listeners que não morrem com a cena.
+     *
+     * Os `scene.input.on` são limpos pelo Phaser junto com a cena, mas os de
+     * `game.events` sobrevivem a ela — sem remover, uma troca de cena deixaria
+     * o listener antigo apontando para controles destruídos.
+     */
+    destroy() {
+        if (!this._onBlur) return;
+        this.scene.game.events.off(Phaser.Core.Events.BLUR, this._onBlur);
+        this.scene.game.events.off(Phaser.Core.Events.HIDDEN, this._onBlur);
+        this._onBlur = null;
     }
 
     getMovementVector() {
         let dx = 0;
         let dy = 0;
 
-        if (this.joystickActive) {
-            dx = this.joystickForce.x;
-            dy = this.joystickForce.y;
+        if (this.moveStick.active) {
+            dx = this.moveStick.force.x;
+            dy = this.moveStick.force.y;
         } else {
             if (this.cursors.left.isDown || this.wasd.left.isDown) dx -= 1;
             if (this.cursors.right.isDown || this.wasd.right.isDown) dx += 1;
@@ -415,6 +525,23 @@ export default class InputManager {
     }
 
     /**
+     * MIRA do ataque: o arraste do controle de ataque, no mesmo formato
+     * normalizado do vetor de movimento.
+     *
+     * Neutro (`{0, 0}`) significa "sem mira", e aí quem decide a direção é o
+     * `flipX` do personagem — o comportamento de sempre. É o que o Espaço do
+     * teclado devolve, então quem joga de teclado não muda nada.
+     *
+     * A zona morta e o encaixe nas oito direções NÃO são aplicados aqui: quem
+     * faz isso é o servidor (`World.attackDir`), com as mesmas constantes. O
+     * cliente só relata o arraste.
+     */
+    getAttackVector() {
+        if (!this.attackStick.active) return { ax: 0, ay: 0 };
+        return { ax: this.attackStick.force.x, ay: this.attackStick.force.y };
+    }
+
+    /**
      * Deve ser chamado a cada frame ANTES de getAttackState.
      */
     update() {
@@ -429,17 +556,20 @@ export default class InputManager {
         }
         this._lastSpaceDown = spaceDown;
 
-        // Touch (botão de ataque)
-        if (!this._prevTouchAttackDown && this._touchAttackDown) {
+        // Controle de ataque (toque/mouse). Só a presença do dedo importa aqui;
+        // a direção do arraste sai por `getAttackVector`.
+        const stickDown = this.attackStick.active;
+
+        if (!this._prevTouchAttackDown && stickDown) {
             this._attackJustPressed = true;
         }
-        if (this._prevTouchAttackDown && !this._touchAttackDown) {
+        if (this._prevTouchAttackDown && !stickDown) {
             this._attackJustReleased = true;
         }
-        this._prevTouchAttackDown = this._touchAttackDown;
+        this._prevTouchAttackDown = stickDown;
 
-        // Estado mantido: teclado OU touch pressionado
-        this._attackHeld = spaceDown || this._touchAttackDown;
+        // Estado mantido: teclado OU controle pressionado
+        this._attackHeld = spaceDown || stickDown;
 
         // Dash: só a borda de descida interessa, do teclado (SHIFT) ou do botão.
         const shiftDown = this.dashKey.isDown;

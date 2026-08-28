@@ -99,8 +99,13 @@ export class Start extends Phaser.Scene {
         const movement = this.inputs.getMovementVector();
         const attackState = this.inputs.getAttackState();
         const dashState = this.inputs.getDashState();
+        // Mira do ataque: independente do movimento, é ela que deixa andar para
+        // um lado e bater para outro.
+        const attackAim = this.inputs.getAttackVector();
 
-        if (!this.player._isDead) this.player.update(movement, attackState, dashState, delta);
+        if (!this.player._isDead) {
+            this.player.update(movement, attackState, dashState, delta, attackAim);
+        }
 
         // DEBUG: avança a peça no ciclo. Offline não há autoridade nenhuma —
         // o próprio personagem é o estado —, então chama direto o mesmo

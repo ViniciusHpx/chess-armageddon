@@ -3,11 +3,17 @@ import {
     attackRecoveryMs, attackWindupMs, chargeAreaMult, chargeDamage, chargePower,
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey, canPhaseDash,
-    KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed
+    KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed,
+    ATTACK_AIM_DEADZONE, ATTACK_INTERVAL, attackDirAngle, attackDirIndex
 } from '../constants/Hierarchy.js';
 import { insideHealZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
+import {
+    attackShapes, attackShapeHitsEllipse, attackSideFor, drawAttackShape,
+    ellipseContainsPoint, rectangleOverlapsEllipse, circleOverlapsEllipse,
+    diamondOverlapsEllipse
+} from '../utils/AttackGeometry.js';
 
 export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y, textureKey, team, debugColor) {
@@ -71,6 +77,23 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this._attackHitAt = 0;
         /** Instante a partir do qual pode atacar ou carregar de novo. */
         this._attackReadyAt = 0;
+
+        /**
+         * MIRA do ataque, independente do vetor de movimento: é ela que deixa o
+         * jogador andar para um lado e bater para outro.
+         *
+         * Quem escreve é a entidade que tem entrada de jogador
+         * (`HumanPlayer.update`). Bots nunca mexem nisso, então para eles o
+         * golpe continua saindo pelo `flipX`, como sempre saiu.
+         */
+        this._aimDx = 0;
+        this._aimDy = 0;
+        /**
+         * Direção do golpe em curso, índice em `ATTACK_DIR_COUNT` (0..7).
+         * Congelada em `performAttack`: mudá-la no meio do golpe faria o dano
+         * sair de onde não apareceu.
+         */
+        this._atkDir = 0;
 
         // Máquina de carga do ataque, compartilhada por humano e bot.
         this._isCharging = false;
@@ -687,21 +710,44 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         return this._currentRank.mass || 1;
     }
 
+    /**
+     * Direção do golpe que está saindo agora.
+     *
+     * A mira manda, se houver; sem mira (zona morta) o golpe sai para o lado
+     * que a peça olha, que é o comportamento de sempre. Espelha
+     * `World.attackDir` do servidor, e é esse fallback que mantém teclado e
+     * BOTS idênticos ao que eram — nenhum dos dois escreve em `_aimDx/_aimDy`.
+     */
+    attackDir() {
+        if (Math.hypot(this._aimDx, this._aimDy) >= ATTACK_AIM_DEADZONE) {
+            return attackDirIndex(this._aimDx, this._aimDy);
+        }
+        return attackDirIndex(this.flipX ? -1 : 1, 0);
+    }
+
     performAttack(enemyGroup) {
         if (this._isAttacking) return;
         if (this.scene.time.now < this._attackReadyAt) return;
         this._isAttacking = true;
         this._attackHitEnemies.clear();
         this._attackEnemyGroup = enemyGroup;
+        // Direção CONGELADA aqui, como no servidor: o desenho e o dano do golpe
+        // saem os dois dela, e recalculá-la a cada quadro faria a área girar
+        // debaixo do golpe já em curso.
+        this._atkDir = this.attackDir();
         // Quando este golpe vai acertar. Serve de chave para a esquiva dos bots
         // (`AIPlayer.tryDodge`), que precisa saber se ainda dá tempo de reagir.
         // O atraso cresce com a carga: o toque rápido sai antes, o golpe cheio
         // se anuncia por mais tempo.
         const windup = attackWindupMs(this._chargePower);
         this._attackHitAt = this.scene.time.now + windup;
-        // Recuperação depois do impacto: é o freio de spam e a desvantagem do
-        // golpe carregado.
-        this._attackReadyAt = this._attackHitAt + attackRecoveryMs(this._chargePower);
+        // Recuperação depois do impacto (a desvantagem do golpe carregado) com
+        // `ATTACK_INTERVAL` de PISO — é ele que dá ritmo ao ataque contínuo.
+        // Vale o maior dos dois, num gate só: não existe segundo temporizador.
+        this._attackReadyAt = Math.max(
+            this._attackHitAt + attackRecoveryMs(this._chargePower),
+            this.scene.time.now + ATTACK_INTERVAL
+        );
 
         this.scene.time.delayedCall(windup, () => {
             // Pode ter morrido/sido desativado durante o delay
@@ -710,251 +756,89 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         });
     }
 
-    drawAttackVisual(enemyGroup) {
-        const atk = this._currentRank.attack;
+    /**
+     * Forma do golpe em curso, no mundo. Uma fonte só para o desenho e para o
+     * dano — antes cada um montava a própria geometria.
+     */
+    attackShape(enemyGroup) {
         const center = this.getEllipseCenter();
-        const dir = this.flipX ? -1 : 1;
-        const startX = center.x + dir * this.collisionRx;
-        const startY = center.y;
+        return attackShapes(
+            this._currentRank.attack,
+            chargeAreaMult(this._chargePower),
+            center.x, center.y,
+            this.collisionRx, this.collisionRy,
+            attackDirAngle(this._atkDir),
+            this.attackSide(enemyGroup)
+        );
+    }
 
-        const mult = chargeAreaMult(this._chargePower);
+    /**
+     * Lado da perna do L do cavalo, -1 ou 1.
+     *
+     * Continua sendo recalculado no momento do uso (e não congelado como no
+     * servidor): é uma das diferenças offline/online já anotadas no
+     * `CLAUDE.md`, e não é o assunto desta mudança. O que mudou é o EIXO — o
+     * lado é medido na perpendicular ao golpe, senão a perna apontaria para o
+     * lugar errado fora do eixo X.
+     */
+    attackSide(enemyGroup) {
+        if (!enemyGroup) return 1;
 
-        this.attackGraphics.clear();
-
-        switch (atk.type) {
-            case 'rectangle': {
-                const w = atk.length * mult;
-                const h = atk.width * mult;
-                const x = dir === 1 ? startX : startX - w;
-                const y = startY - h / 2;
-
-                this.attackGraphics.fillStyle(0xff0000, 0.4);
-                this.attackGraphics.fillRect(x, y, w, h);
-                this.attackGraphics.lineStyle(2, 0xff0000);
-                this.attackGraphics.strokeRect(x, y, w, h);
-                break;
-            }
-
-            case 'circle': {
-                const radius = atk.radius * mult;
-                this.attackGraphics.lineStyle(3, 0xff0000, 0.6);
-                this.attackGraphics.strokeCircle(center.x, center.y, radius);
-                break;
-            }
-
-            case 'lshape': {
-                const forwardLength = atk.forwardLength * mult;
-                const sideLength = atk.sideLength * mult;
-                const width = atk.width * mult;
-
-                const forwardEndX = startX + dir * forwardLength;
-                const forwardEndY = startY;
-                const forwardW = forwardLength;
-                const forwardH = width;
-                const forwardX = dir === 1 ? startX : startX - forwardW;
-                const forwardY = startY - forwardH / 2;
-
-                this.attackGraphics.fillStyle(0xff0000, 0.4);
-                this.attackGraphics.fillRect(forwardX, forwardY, forwardW, forwardH);
-                this.attackGraphics.lineStyle(2, 0xff0000);
-                this.attackGraphics.strokeRect(forwardX, forwardY, forwardW, forwardH);
-
-                let sideSignY = 1;
-                if (enemyGroup) {
-                    let nearest = null;
-                    let minDist = Infinity;
-                    for (const e of enemyGroup.getChildren()) {
-                        if (!e.active) continue;
-                        const d = Phaser.Math.Distance.Between(this.x, this.y, e.x, e.y);
-                        if (d < minDist) {
-                            minDist = d;
-                            nearest = e;
-                        }
-                    }
-                    if (nearest) {
-                        sideSignY = nearest.y > this.y ? 1 : -1;
-                    }
-                }
-
-                const sideW = width;
-                const sideH = sideLength;
-                const sideX = forwardEndX - sideW / 2;
-                const sideY = forwardEndY + (sideSignY * sideLength / 2) - sideH / 2;
-
-                this.attackGraphics.fillRect(sideX, sideY, sideW, sideH);
-                this.attackGraphics.strokeRect(sideX, sideY, sideW, sideH);
-                break;
-            }
-
-            case 'diamond': {
-                const radius = atk.radius * mult;
-                const cx = center.x;
-                const cy = center.y;
-
-                this.attackGraphics.fillStyle(0xff0000, 0.4);
-                this.attackGraphics.beginPath();
-                this.attackGraphics.moveTo(cx, cy - radius);
-                this.attackGraphics.lineTo(cx + radius, cy);
-                this.attackGraphics.lineTo(cx, cy + radius);
-                this.attackGraphics.lineTo(cx - radius, cy);
-                this.attackGraphics.closePath();
-                this.attackGraphics.fillPath();
-                this.attackGraphics.lineStyle(2, 0xff0000);
-                this.attackGraphics.strokePath();
-                break;
+        let nearest = null;
+        let minDist = Infinity;
+        for (const e of enemyGroup.getChildren()) {
+            if (!e.active) continue;
+            const d = Phaser.Math.Distance.Between(this.x, this.y, e.x, e.y);
+            if (d < minDist) {
+                minDist = d;
+                nearest = e;
             }
         }
+        if (!nearest) return 1;
+
+        return attackSideFor(this._atkDir, this.x, this.y, nearest.x, nearest.y);
+    }
+
+    drawAttackVisual(enemyGroup) {
+        this.attackGraphics.clear();
+        drawAttackShape(this.attackGraphics, this.attackShape(enemyGroup));
     }
 
     executeAttackHit(enemyGroup) {
-        const atk = this._currentRank.attack;
-        const attackerCenter = this.getEllipseCenter();
-        const dir = this.flipX ? -1 : 1;
-        const startX = attackerCenter.x + dir * this.collisionRx;
-        const startY = attackerCenter.y;
-
         // Área e dano da MESMA potência, os dois já com teto embutido
-        // (AREA_MULT_MAX e DAMAGE_MAX). A geometria abaixo não mudou: continua
-        // recebendo um multiplicador, agora fracionário.
-        const mult = chargeAreaMult(this._chargePower);
+        // (AREA_MULT_MAX e DAMAGE_MAX).
         const damage = chargeDamage(this._chargePower);
+        const forma = this.attackShape(enemyGroup);
 
-        switch (atk.type) {
-            case 'rectangle': {
-                const w = atk.length * mult;
-                const h = atk.width * mult;
-                const x = dir === 1 ? startX : startX - w;
-                const y = startY - h / 2;
-                const rect = { x, y, w, h };
+        for (const enemy of enemyGroup.getChildren()) {
+            if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
 
-                for (const enemy of enemyGroup.getChildren()) {
-                    if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
-                    const enemyCenter = enemy.getEllipseCenter();
-                    if (PlayerBase.rectangleOverlapsEllipse(rect, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy)) {
-                        this.applyDamageToEnemy(enemy, damage);
-                    }
-                }
-                break;
-            }
-
-            case 'circle': {
-                const radius = atk.radius * mult;
-                for (const enemy of enemyGroup.getChildren()) {
-                    if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
-                    const enemyCenter = enemy.getEllipseCenter();
-                    if (PlayerBase.circleOverlapsEllipse(attackerCenter.x, attackerCenter.y, radius, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy)) {
-                        this.applyDamageToEnemy(enemy, damage);
-                    }
-                }
-                break;
-            }
-
-            case 'lshape': {
-                const forwardLength = atk.forwardLength * mult;
-                const sideLength = atk.sideLength * mult;
-                const width = atk.width * mult;
-
-                const forwardEndX = startX + dir * forwardLength;
-                const forwardEndY = startY;
-                const forwardW = forwardLength;
-                const forwardH = width;
-                const forwardX = dir === 1 ? startX : startX - forwardW;
-                const forwardY = startY - forwardH / 2;
-                const forwardRect = { x: forwardX, y: forwardY, w: forwardW, h: forwardH };
-
-                let sideSignY = 1;
-                if (enemyGroup) {
-                    let nearest = null;
-                    let minDist = Infinity;
-                    for (const e of enemyGroup.getChildren()) {
-                        if (!e.active) continue;
-                        const d = Phaser.Math.Distance.Between(this.x, this.y, e.x, e.y);
-                        if (d < minDist) {
-                            minDist = d;
-                            nearest = e;
-                        }
-                    }
-                    if (nearest) {
-                        sideSignY = nearest.y > this.y ? 1 : -1;
-                    }
-                }
-
-                const sideW = width;
-                const sideH = sideLength;
-                const sideX = forwardEndX - sideW / 2;
-                const sideY = forwardEndY + (sideSignY * sideLength / 2) - sideH / 2;
-                const sideRect = { x: sideX, y: sideY, w: sideW, h: sideH };
-
-                for (const enemy of enemyGroup.getChildren()) {
-                    if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
-                    const enemyCenter = enemy.getEllipseCenter();
-                    if (PlayerBase.rectangleOverlapsEllipse(forwardRect, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy) ||
-                        PlayerBase.rectangleOverlapsEllipse(sideRect, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy)) {
-                        this.applyDamageToEnemy(enemy, damage);
-                    }
-                }
-                break;
-            }
-
-            case 'diamond': {
-                const radius = atk.radius * mult;
-                for (const enemy of enemyGroup.getChildren()) {
-                    if (!enemy.active || this._attackHitEnemies.has(enemy)) continue;
-                    const enemyCenter = enemy.getEllipseCenter();
-                    if (PlayerBase.diamondOverlapsEllipse(attackerCenter.x, attackerCenter.y, radius, enemyCenter.x, enemyCenter.y, enemy.collisionRx, enemy.collisionRy)) {
-                        this.applyDamageToEnemy(enemy, damage);
-                    }
-                }
-                break;
+            const c = enemy.getEllipseCenter();
+            if (attackShapeHitsEllipse(forma, c.x, c.y, enemy.collisionRx, enemy.collisionRy)) {
+                this.applyDamageToEnemy(enemy, damage);
             }
         }
     }
 
+    // Os testes de sobreposição mudaram de casa: vivem em
+    // `src/utils/AttackGeometry.js`, o espelho do `sim/geometry.ts` do
+    // servidor, porque agora o desenho do modo ONLINE (`ArenaActor`, que não
+    // estende esta classe) também precisa deles. Os estáticos ficam como
+    // atalhos, para a interface que o `CLAUDE.md` descreve continuar válida.
     static ellipseContainsPoint(px, py, cx, cy, rx, ry) {
-        const dx = px - cx;
-        const dy = py - cy;
-        return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.001;
+        return ellipseContainsPoint(px, py, cx, cy, rx, ry);
     }
 
     static rectangleOverlapsEllipse(rect, ellipseCx, ellipseCy, rx, ry) {
-        if (rx <= 0 || ry <= 0) return false;
-        const closestX = Phaser.Math.Clamp(ellipseCx, rect.x, rect.x + rect.w);
-        const closestY = Phaser.Math.Clamp(ellipseCy, rect.y, rect.y + rect.h);
-        return PlayerBase.ellipseContainsPoint(closestX, closestY, ellipseCx, ellipseCy, rx, ry);
+        return rectangleOverlapsEllipse(rect, ellipseCx, ellipseCy, rx, ry);
     }
 
     static circleOverlapsEllipse(circleCx, circleCy, radius, ellipseCx, ellipseCy, rx, ry) {
-        if (rx <= 0 || ry <= 0) return false;
-        const dx = ellipseCx - circleCx;
-        const dy = ellipseCy - circleCy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist === 0) return true;
-
-        const angle = Math.atan2(dy, dx);
-        const cosA = Math.cos(angle);
-        const sinA = Math.sin(angle);
-        const ellipseRadius = (rx * ry) / Math.sqrt((ry * cosA) ** 2 + (rx * sinA) ** 2);
-        return dist <= radius + ellipseRadius;
+        return circleOverlapsEllipse(circleCx, circleCy, radius, ellipseCx, ellipseCy, rx, ry);
     }
 
     static diamondOverlapsEllipse(dCx, dCy, radius, eCx, eCy, rx, ry) {
-        if (rx <= 0 || ry <= 0) return false;
-        const dx = eCx - dCx;
-        const dy = eCy - dCy;
-        const u = dx + dy;
-        const v = dx - dy;
-
-        if (Math.abs(u) <= radius && Math.abs(v) <= radius) {
-            return true;
-        }
-
-        const closestU = Phaser.Math.Clamp(u, -radius, radius);
-        const closestV = Phaser.Math.Clamp(v, -radius, radius);
-
-        const closestX = (closestU + closestV) / 2 + dCx;
-        const closestY = (closestU - closestV) / 2 + dCy;
-
-        return PlayerBase.ellipseContainsPoint(closestX, closestY, eCx, eCy, rx, ry);
+        return diamondOverlapsEllipse(dCx, dCy, radius, eCx, eCy, rx, ry);
     }
 
     // -----------------------------------------------------------------------

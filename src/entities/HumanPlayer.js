@@ -73,9 +73,26 @@ export default class HumanPlayer extends PlayerBase {
         });
     }
 
-    update(movement, attackState, dashState, deltaMs) {
+    /**
+     * @param {{dx: number, dy: number}} movement Vetor de movimento.
+     * @param {{held: boolean, justPressed: boolean, justReleased: boolean}} attackState
+     * @param {{justPressed: boolean}} dashState
+     * @param {number} deltaMs
+     * @param {{ax: number, ay: number}} [attackAim] MIRA do ataque, vinda do
+     *        controle de ataque. Neutra (ou ausente, no caso do teclado)
+     *        significa "sem mira", e aí o golpe sai pelo `flipX` — o
+     *        comportamento de sempre.
+     */
+    update(movement, attackState, dashState, deltaMs, attackAim) {
         // Morto: ignora entrada até renascer
         if (this._isDead) return;
+
+        // A mira é lida ANTES de qualquer golpe sair: é dela que
+        // `performAttack` congela a direção. Guardar no personagem (em vez de
+        // passar por parâmetro) é o mesmo desenho do servidor, onde a mira mora
+        // no `Actor` e o bot simplesmente nunca escreve nela.
+        this._aimDx = attackAim ? attackAim.ax : 0;
+        this._aimDy = attackAim ? attackAim.ay : 0;
 
         // Entrada de dash. Antes do ataque de propósito: pedir dash com o
         // golpe já em curso é recusado dentro de `startDash`.
@@ -83,13 +100,23 @@ export default class HumanPlayer extends PlayerBase {
             this.startDash(movement.dx, movement.dy);
         }
 
-        // Entrada de ataque
-        if (attackState.justPressed) {
-            // Com o ataque carregado desligado o aperto já sai como golpe leve;
-            // o `justReleased` abaixo não acha carga nenhuma e não faz nada.
-            if (CHARGED_ATTACK_ENABLED) this.startCharging();
-            else this.attackLight(this.scene.enemyPlayers);
+        // Entrada de ataque.
+        //
+        // Com a carga desligada, `held` (e não só `justPressed`) é o gatilho: é
+        // isso que faz o golpe se repetir enquanto o controle está pressionado.
+        // O ritmo é o `_attackReadyAt`, cujo piso é `ATTACK_INTERVAL` — e
+        // `attackLight` sai na hora se já está atacando ou em recuperação,
+        // então chamar todo quadro não encadeia golpe nem cria temporizador
+        // paralelo.
+        //
+        // Com a carga LIGADA nada disso vale: segurar significa carregar, e
+        // repetir atropelaria a carga.
+        if (CHARGED_ATTACK_ENABLED) {
+            if (attackState.justPressed) this.startCharging();
+        } else if (attackState.held && !this.isDashing) {
+            this.attackLight(this.scene.enemyPlayers);
         }
+
         if (attackState.justReleased) {
             this.releaseCharge(this.scene.enemyPlayers);
         }

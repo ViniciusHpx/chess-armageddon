@@ -110,6 +110,64 @@ export const ATTACK_WINDUP_MAX_MS = 260;
 export const ATTACK_RECOVERY_LIGHT_MS = 60;
 export const ATTACK_RECOVERY_MAX_MS = 340;
 
+// ---------------------------------------------------------------------------
+// DIREÇÃO DO GOLPE (espelho de `constants.ts` do servidor)
+//
+// O golpe já saiu preso ao eixo X: a direção era o `flipX`, ou seja, leste ou
+// oeste. Hoje ela é uma das OITO direções, escolhida no controle de ataque, e
+// independente de para onde o personagem anda.
+//
+// O que trafega é o ÍNDICE (0..7), não o ângulo — mesmo motivo de `atkPower`
+// trafegar a potência final em vez do tempo de carga: os dois lados derivam o
+// ângulo do mesmo índice, então não existe arredondamento para divergir.
+//
+// A ORDEM é contrato de rede, como `RANK_ORDER`: índice 0 é leste e a lista
+// gira no sentido do Y da tela (que cresce para BAIXO), então 2 é sul e 6 é
+// norte. Não reordene de um lado só.
+// ---------------------------------------------------------------------------
+
+export const ATTACK_DIR_COUNT = 8;
+
+/** Ângulo entre duas direções vizinhas (45°). */
+const ATTACK_DIR_STEP = (Math.PI * 2) / ATTACK_DIR_COUNT;
+
+/**
+ * Módulo mínimo do vetor de mira para ele valer como direção.
+ *
+ * Abaixo disto o toque conta como "sem mira" e o golpe sai para onde a peça
+ * olha (o `flipX`), que é o comportamento de sempre — é o que mantém teclado e
+ * bots exatamente como eram.
+ */
+export const ATTACK_AIM_DEADZONE = 0.35;
+
+/** Direção (0..7) mais próxima de um vetor de mira. */
+export function attackDirIndex(ax, ay) {
+    const i = Math.round(Math.atan2(ay, ax) / ATTACK_DIR_STEP);
+    return ((i % ATTACK_DIR_COUNT) + ATTACK_DIR_COUNT) % ATTACK_DIR_COUNT;
+}
+
+/** Ângulo, em radianos, de uma direção de ataque. */
+export function attackDirAngle(dir) {
+    const i = ((Math.round(dir) % ATTACK_DIR_COUNT) + ATTACK_DIR_COUNT) % ATTACK_DIR_COUNT;
+    return i * ATTACK_DIR_STEP;
+}
+
+/**
+ * Espera MÍNIMA entre o início de dois golpes, em ms. É o botão de
+ * balanceamento do ataque contínuo (espelha `ATTACK_INTERVAL` do servidor —
+ * as duas precisam ter o mesmo valor, senão a previsão local desanda).
+ *
+ * Segurar o controle de ataque repete o golpe sozinho, e sem este piso a
+ * cadência seria windup + recuperação do golpe leve (160 + 60 = 220 ms, ou seja
+ * 4,5 por segundo) — o personagem viraria uma máquina de bater. Com 420 ms dá
+ * ~2,4 por segundo.
+ *
+ * Entra como PISO do `_attackReadyAt`, o mesmo gate que já era o freio de spam
+ * — não existe um segundo temporizador. Bots não são afetados: o cooldown deles
+ * (700 ms) é maior, e vale o maior dos dois.
+ */
+export const ATTACK_INTERVAL = 420;
+
 /** Potência (0..1) do tempo de carga cumprido, já com o teto aplicado. */
 export function chargePower(elapsedMs, chargeTimeMs) {
     if (!(chargeTimeMs > 0)) return 1;

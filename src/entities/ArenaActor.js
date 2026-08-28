@@ -1,6 +1,10 @@
-import { RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, chargeAreaMult, skinKey } from '../constants/Hierarchy.js';
+import {
+    RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, chargeAreaMult, skinKey,
+    attackDirAngle
+} from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
+import { attackShapes, drawAttackShape } from '../utils/AttackGeometry.js';
 
 /**
  * Atraso de renderização dos personagens que não são o jogador local, em ms.
@@ -402,89 +406,39 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
     }
 
     /**
-     * Forma do golpe. Precisa bater com `World.executeAttackHit()` no servidor:
-     * é a mesma geometria, uma desenhando e a outra causando dano.
+     * Forma do golpe.
+     *
+     * A geometria sai de `attackShapes`, a MESMA função que o
+     * `World.executeAttackHit` do servidor usa para o dano — antes cada lado
+     * montava a própria e os dois `switch` tinham de ser mantidos em sincronia
+     * à mão.
+     *
+     * Tudo o que ela precisa vem PRONTO do estado, nada é recalculado aqui:
+     * a potência (`atkPower`), a direção (`atkDir`) e o lado da perna do L
+     * (`atkSide`) foram decididos e congelados pelo servidor no início do
+     * golpe. É o que garante que a área desenhada é a que causou o dano.
      */
     drawAttackVisual() {
-        const atk = this.rank.attack;
         const center = this.getEllipseCenter();
-        const dir = this.flipX ? -1 : 1;
-        const startX = center.x + dir * this.collisionRx;
-        const startY = center.y;
-        // Mesma área que o servidor usou para calcular o dano: o número chega
-        // pronto no estado (`atkPower`), em vez de o cliente recalcular a
-        // partir do tempo e desenhar um golpe de tamanho diferente do que bate.
-        // `Number.isFinite`: com reflection de schema, campo que ainda não mudou
-        // de valor nunca vira patch e chega `undefined` — sem a guarda, a área
-        // viraria NaN e o golpe sumiria da tela.
+
+        // `Number.isFinite`: com reflection de schema, campo que ainda não
+        // mudou de valor nunca vira patch e chega `undefined` — sem a guarda a
+        // área viraria NaN e o golpe sumiria da tela.
         const bruto = this.actorState.atkPower;
         const mult = chargeAreaMult(Number.isFinite(bruto) ? bruto / 100 : 0);
+
+        const dir = this.actorState.atkDir;
+        const side = this.actorState.atkSide;
 
         const g = this.attackGraphics;
         g.setDepth(this.y + 1);
 
-        switch (atk.type) {
-            case 'rectangle': {
-                const w = atk.length * mult;
-                const h = atk.width * mult;
-                const x = dir === 1 ? startX : startX - w;
-                const y = startY - h / 2;
-
-                g.fillStyle(0xff0000, 0.4);
-                g.fillRect(x, y, w, h);
-                g.lineStyle(2, 0xff0000);
-                g.strokeRect(x, y, w, h);
-                break;
-            }
-
-            case 'circle': {
-                g.lineStyle(3, 0xff0000, 0.6);
-                g.strokeCircle(center.x, center.y, atk.radius * mult);
-                break;
-            }
-
-            case 'lshape': {
-                const forwardLength = atk.forwardLength * mult;
-                const sideLength = atk.sideLength * mult;
-                const width = atk.width * mult;
-
-                const forwardX = dir === 1 ? startX : startX - forwardLength;
-                const forwardY = startY - width / 2;
-
-                g.fillStyle(0xff0000, 0.4);
-                g.fillRect(forwardX, forwardY, forwardLength, width);
-                g.lineStyle(2, 0xff0000);
-                g.strokeRect(forwardX, forwardY, forwardLength, width);
-
-                // O lado da perna do L vem do servidor, congelado no início do
-                // golpe — não é recalculado aqui.
-                const forwardEndX = startX + dir * forwardLength;
-                const sideX = forwardEndX - width / 2;
-                const sideY = startY + (this.actorState.atkSide * sideLength) / 2 - sideLength / 2;
-
-                g.fillRect(sideX, sideY, width, sideLength);
-                g.strokeRect(sideX, sideY, width, sideLength);
-                break;
-            }
-
-            case 'diamond': {
-                const radius = atk.radius * mult;
-                const cx = center.x;
-                const cy = center.y;
-
-                g.fillStyle(0xff0000, 0.4);
-                g.beginPath();
-                g.moveTo(cx, cy - radius);
-                g.lineTo(cx + radius, cy);
-                g.lineTo(cx, cy + radius);
-                g.lineTo(cx - radius, cy);
-                g.closePath();
-                g.fillPath();
-                g.lineStyle(2, 0xff0000);
-                g.strokePath();
-                break;
-            }
-        }
+        drawAttackShape(g, attackShapes(
+            this.rank.attack, mult, center.x, center.y,
+            this.collisionRx, this.collisionRy,
+            attackDirAngle(Number.isFinite(dir) ? dir : 0),
+            Number.isFinite(side) ? side : 1
+        ));
     }
 
     /**
