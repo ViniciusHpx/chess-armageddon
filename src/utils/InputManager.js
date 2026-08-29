@@ -1,3 +1,5 @@
+import { DEBUG_BUTTON_ENABLED } from '../constants/Mobile.js';
+
 /** Botão de ataque: vermelho cheio, opaco o bastante para ler no mapa claro. */
 const ATTACK_BTN_COLOR = 0xd91b1b;
 const ATTACK_BTN_ALPHA = 0.75;
@@ -338,6 +340,11 @@ export default class InputManager {
      * das setas, texto serve, porque a palavra DEBUG é o ponto.
      */
     createDebugButton() {
+        // Ferramenta de teste: fora do jogo de verdade. No celular ela fica no
+        // arco do polegar direito, junto do ataque e do dash, e um toque errado
+        // troca a peça no meio da briga. Ver `constants/Mobile.js`.
+        if (!DEBUG_BUTTON_ENABLED) return;
+
         const { width, height } = this.scene.cameras.main;
         // Alinhado com o dash e à esquerda dele. A distância entre centros (83)
         // é maior que a soma dos raios (64), então não há como acertar os dois
@@ -453,8 +460,10 @@ export default class InputManager {
             }
 
             // DEBUG: mesma trava de borda do dash, pelo mesmo motivo — um
-            // toque rápido começa e acaba entre dois quadros.
-            if (this.debugBtn.getBounds().contains(pointer.x, pointer.y)) {
+            // toque rápido começa e acaba entre dois quadros. Com a flag
+            // desligada o botão nem existe, e `getDebugState()` passa a
+            // devolver sempre `justPressed: false`.
+            if (this.debugBtn && this.debugBtn.getBounds().contains(pointer.x, pointer.y)) {
                 this._debugJustPressed = true;
             }
         });

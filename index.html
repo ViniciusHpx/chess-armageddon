@@ -287,8 +287,18 @@
             módulos de src/ os consomem sem import, como já era o caso do Phaser.
             colyseus.js é cópia de
             chess-armageddon-server/node_modules/@colyseus/sdk/dist/colyseus.js
+
+            `phaser.min.js` é o build MINIFICADO do Phaser 3.90.0 (`dist/` do
+            pacote npm de mesma versão), 1,1 MB. O `phaser.js` ao lado é o build
+            de desenvolvimento da MESMA versão, 7,6 MB e 248 mil linhas: o custo
+            dele não é o download (num app ele é local), é o PARSE — segundos de
+            espera antes do primeiro quadro num Android médio. Ele fica no
+            repositório só como rota de volta; trocar a linha abaixo desfaz.
+
+            Ao empacotar o app, o `phaser.js` NÃO pode ir junto: seriam 7,6 MB
+            mortos dentro do APK.
         -->
-        <script src="./phaser.js"></script>
+        <script src="./phaser.min.js"></script>
         <script src="./colyseus.js"></script>
         <script type="module" src="./src/main.js"></script>
     </body>

@@ -584,8 +584,21 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         this.createHealthBar();
     }
 
+    /**
+     * Moldura de debug da elipse. Ligada pela tecla `H`, como na `Arena`.
+     *
+     * Era desenhada SEMPRE: três `strokeEllipse` mais um `fillEllipse` por
+     * personagem por quadro, dez personagens — o trabalho de `Graphics` mais
+     * caro do modo offline, e invisível para quem só quer jogar. A `Arena` já
+     * tinha a guarda; aqui ela faltava.
+     *
+     * `scene.showHitboxes` ausente conta como desligado, então nenhuma cena
+     * precisa declarar a flag para o jogo funcionar.
+     */
     drawDebugHitbox() {
         this.debugGraphics.clear();
+        if (!this.scene.showHitboxes) return;
+
         const center = this.getEllipseCenter();
         const rx = this.collisionRx;
         const ry = this.collisionRy;

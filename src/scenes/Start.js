@@ -68,6 +68,14 @@ export class Start extends Phaser.Scene {
         this.player.displayName = 'Você';
         this.alliedPlayers.add(this.player);
 
+        // Moldura de debug das elipses, ligada pela tecla `H` — a mesma flag e
+        // a mesma tecla da `Arena`. Antes o offline desenhava a moldura sempre,
+        // por não ter flag nenhuma.
+        this.showHitboxes = false;
+        this.input.keyboard.on('keydown-H', () => {
+            this.showHitboxes = !this.showHitboxes;
+        });
+
         this.inputs = new InputManager(this);
 
         // Tela de morte (criada depois do InputManager para ficar acima da UI)
