@@ -13,11 +13,12 @@ import {
 import { playDashFx } from '../utils/DashFx.js';
 import {
     ROOM_NAME, resolveEndpoint, resolvePlayerName, resolveJoinChoice,
-    reloadIntoLobby, reloadIntoRoom
+    reloadIntoLobby, reloadIntoRoom, tuneReconnection
 } from '../net/netconfig.js';
 import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH } from '../constants/Scenario.js';
 import MapCollider from '../utils/MapCollider.js';
 import { createHealZoneFx } from '../utils/HealZoneFx.js';
+import { viewportOf, HUD_MARGIN } from '../utils/Viewport.js';
 import { ELLIPSE_RATIO } from '../utils/CollisionResolver.js';
 
 /**
@@ -140,6 +141,17 @@ export class Arena extends Phaser.Scene {
         this.localTeam = null;
         this.cameraLocked = false;
 
+        // Estado da CONEXÃO, que não é a mesma coisa que ter um objeto `Room`.
+        // Entre a queda e a volta o `this.room` continua existindo — é ele que
+        // guarda o `reconnectionToken` e refaz o vínculo —, mas nada pode ser
+        // enviado: o SDK enfileira o que sai com o socket fechado e despeja
+        // tudo na volta, o que reviveria uma entrada de vários segundos atrás.
+        this.conectado = false;
+        /** Saída de propósito (MENU, revanche, aba fechando). Ver `leaveRoom`. */
+        this.saindo = false;
+        /** Voltou de uma queda: a previsão recomeça do próximo estado do servidor. */
+        this.ressincronizar = false;
+
         // Previsão local do próprio personagem.
         this.predX = 0;
         this.predY = 0;
@@ -225,23 +237,27 @@ export class Arena extends Phaser.Scene {
             this.showHitboxes = !this.showHitboxes;
         });
 
-        // O Phaser pausa o loop quando a aba perde o foco, e aí ninguém mais
-        // manda entrada. Sem avisar o servidor, ele continuaria aplicando o
-        // último vetor e o boneco andaria sozinho até a borda do mapa.
+        // Perder o foco (BLUR) ou ir para segundo plano (HIDDEN) SOLTA os
+        // controles, e só isso. O Phaser pausa o loop nesses eventos e ninguém
+        // mais manda entrada; sem avisar o servidor, ele continuaria aplicando
+        // o último vetor e o boneco andaria sozinho até a borda do mapa.
+        //
+        // Trocar de aplicativo no celular cai exatamente aqui — e é por isso
+        // que este caminho NÃO sai da sala. O jogador continua na partida, o
+        // personagem fica parado, e voltar é só voltar. Se o sistema derrubar
+        // o socket enquanto isso, quem cuida é a reconexão (ver `bindRoom`).
         const halt = () => this.haltInput();
         this.game.events.on(Phaser.Core.Events.BLUR, halt);
         this.game.events.on(Phaser.Core.Events.HIDDEN, halt);
 
         // Fechar a aba/navegador avisa o servidor na hora, em vez de deixá-lo
-        // segurando a vaga pelos 20 s de reconexão — é isso que fazia a sala
-        // continuar na lista com um jogador que já foi embora.
-        //
-        // Não é a garantia da limpeza, e nem poderia ser: `pagehide` não chega
-        // num travamento ou numa queda de rede. A garantia continua sendo a
-        // desconexão detectada pelo servidor; isto só torna o caso comum
-        // imediato. `pagehide` cobre mais navegadores que `beforeunload` no
-        // celular, e a saída é idempotente.
-        const sair = () => this.leaveRoom();
+        // segurando a vaga pela janela de reconexão — é isso que fazia a sala
+        // continuar na lista com um jogador que já foi embora. Não é a garantia
+        // da limpeza, e nem poderia ser: `pagehide` não chega num travamento
+        // nem numa queda de rede. A garantia continua sendo a desconexão
+        // detectada pelo servidor; isto só torna o caso comum imediato.
+        // Quando ele significa saída e quando não, ver `handlePageHide`.
+        const sair = (event) => this.handlePageHide(event);
         window.addEventListener('pagehide', sair);
 
         this.connect();
@@ -252,6 +268,23 @@ export class Arena extends Phaser.Scene {
             window.removeEventListener('pagehide', sair);
             this.leaveRoom();
         });
+    }
+
+    /**
+     * `pagehide`: a página está indo embora de vez, ou só para o cache?
+     *
+     * `event.persisted` é a única leitura que o evento oferece: com ele a
+     * página vai para o cache de retorno (bfcache) e pode voltar viva, com a
+     * mesma sessão — sair ali transformaria um alt-tab em desistência. Sem
+     * ele a página está sendo descartada, e aí sair é o certo.
+     *
+     * Trocar de aplicativo no celular não passa por aqui: isso é
+     * `visibilitychange`, que o Phaser entrega como HIDDEN e que apenas solta
+     * os controles.
+     */
+    handlePageHide(event) {
+        if (event && event.persisted) return;
+        this.leaveRoom();
     }
 
     /**
@@ -270,12 +303,32 @@ export class Arena extends Phaser.Scene {
 
         const room = this.room;
         this.room = null;
-        room.leave();
+        // Marca ANTES de fechar: é o que faz o `onLeave` saber que a partida
+        // não caiu, foi deixada — e não oferecer reconexão nem aviso de erro.
+        this.saindo = true;
+
+        // Ir embora de propósito cancela a reconexão automática do SDK. Sem
+        // isto ele passaria os próximos segundos tentando voltar para uma sala
+        // que o jogador já deixou, e uma tentativa que desse certo ressuscitaria
+        // o personagem no meio do lobby.
+        room.reconnection.enabled = false;
+        room.reconnection.maxRetries = 0;
+
+        // Com o socket em pé dá para avisar (LEAVE_ROOM → CONSENTED no
+        // servidor) e a vaga é liberada na hora. Já caído não há a quem avisar:
+        // fecha e pronto, que a vaga vence sozinha na janela de reconexão.
+        room.leave(this.conectado);
+        this.conectado = false;
     }
 
     /** Zera movimento, mira e ataque no servidor. Usado ao perder o foco da aba. */
     haltInput() {
-        if (!this.room) return;
+        // Caído, o que sobra é soltar a carga LOCAL: mandar não adianta (o SDK
+        // enfileira) e o servidor já congelou o personagem ao perder o socket.
+        if (!this.room || !this.conectado) {
+            this.localCharging = false;
+            return;
+        }
 
         this.sendInputPacket(0, 0, performance.now(), 0, 0);
 
@@ -317,11 +370,13 @@ export class Arena extends Phaser.Scene {
             strokeThickness: 4
         };
 
-        this.statusText = this.add.text(16, 16, 'Conectando...', style)
+        this.viewport = viewportOf(this);
+
+        this.statusText = this.add.text(0, 0, 'Conectando...', style)
             .setScrollFactor(0)
             .setDepth(9000);
 
-        this.killFeed = this.add.text(this.cameras.main.width - 16, 16, '', {
+        this.killFeed = this.add.text(0, 0, '', {
             ...style,
             fontSize: '14px',
             align: 'right'
@@ -334,7 +389,7 @@ export class Arena extends Phaser.Scene {
 
         // Placar dos times. Só aparece nos modos com condição de vitória —
         // hoje o `team_deathmatch` —, senão seria um número sem meta.
-        this.teamScoreText = this.add.text(this.cameras.main.width / 2, 16, '', {
+        this.teamScoreText = this.add.text(0, 0, '', {
             ...style,
             fontSize: '20px',
             align: 'center'
@@ -342,6 +397,30 @@ export class Arena extends Phaser.Scene {
             .setOrigin(0.5, 0)
             .setScrollFactor(0)
             .setDepth(9000);
+
+        this.layoutHud();
+        this.viewport.onResize(() => this.layoutHud());
+    }
+
+    /**
+     * As três linhas de texto do topo, ancoradas na área útil da tela.
+     *
+     * Cada uma no seu canto: status à esquerda, kill feed à direita (origem
+     * 1,0, então ele cresce para dentro) e placar dos times no meio. Numa tela
+     * mais larga elas simplesmente se afastam — o que cabia em 1280 continua
+     * cabendo, com folga.
+     */
+    layoutHud() {
+        const vp = this.viewport;
+
+        const status = vp.topLeft(HUD_MARGIN, HUD_MARGIN);
+        this.statusText.setPosition(status.x, status.y);
+
+        const feed = vp.topRight(HUD_MARGIN, HUD_MARGIN);
+        this.killFeed.setPosition(feed.x, feed.y);
+
+        const placar = vp.topCenter(HUD_MARGIN);
+        this.teamScoreText.setPosition(placar.x, placar.y);
     }
 
     // -----------------------------------------------------------------------
@@ -405,6 +484,13 @@ export class Arena extends Phaser.Scene {
         }
 
         this.statusText.setText('');
+        this.conectado = true;
+
+        // A reconexão automática do SDK existe desde antes desta cena; o que
+        // faltava era ajustá-la à janela do servidor. Tem de ser aqui, com o
+        // `Room` já em mãos e ANTES de qualquer queda possível.
+        tuneReconnection(this.room);
+
         this.bindRoom(this.room);
     }
 
@@ -440,8 +526,51 @@ export class Arena extends Phaser.Scene {
 
         room.onMessage('kill', ({ killer, victim }) => this.pushKillFeed(`${killer} matou ${victim}`));
 
+        // -------------------------------------------------------------------
+        // QUEDA E VOLTA
+        //
+        // Quem reconecta é o próprio SDK, no MESMO objeto `Room`: ele repete o
+        // `reconnectionToken` e o servidor resolve o `allowReconnection` que
+        // ficou pendurado no `onLeave` de lá. Como o objeto é o mesmo, o
+        // `sessionId`, o decoder e TODOS os callbacks acima continuam de pé —
+        // não há sala nova, `onAdd` não torna a disparar e nenhum ator, sprite
+        // ou listener é criado duas vezes. Por isso não se refaz vínculo
+        // nenhum aqui: só se marca o estado e se cuida da previsão local.
+        // -------------------------------------------------------------------
+
+        // Socket caiu, mas a sessão ainda vale: o servidor congelou o
+        // personagem e está guardando a vaga.
+        room.onDrop(() => {
+            this.conectado = false;
+            // A carga em curso morre aqui: quem a cronometra é o servidor, e
+            // para ele o botão nunca foi solto.
+            this.localCharging = false;
+            this.statusText.setText('Conexão perdida.\nTentando voltar para a partida...');
+        });
+
+        // Voltou. O estado inteiro chega de novo pelo mesmo decoder, então não
+        // há o que reconstruir — só a previsão local, que ficou parada num
+        // ponto que já não é o do servidor.
+        room.onReconnect(() => {
+            this.conectado = true;
+            this.ressincronizar = true;
+            this.statusText.setText('');
+        });
+
         room.onLeave((code) => {
-            this.statusText.setText(`Desconectado (código ${code}).\nRecarregue a página para voltar.`);
+            this.conectado = false;
+
+            // Saída de propósito: o `leaveRoom` já sabe o que está fazendo (o
+            // MENU e a revanche recarregam a página em seguida).
+            if (this.saindo || code === Colyseus.CloseCode.CONSENTED) return;
+
+            // Chegar aqui sem ter pedido significa que a reconexão acabou: ou
+            // o servidor encerrou a sala, ou a janela venceu com o jogador
+            // fora. Não há sessão para recuperar, então o caminho é o lobby —
+            // e não um `join` novo por conta própria, que criaria uma partida
+            // nova em vez de retomar esta.
+            this.statusText.setText('Não foi possível voltar para a partida.\nVoltando ao lobby...');
+            this.time.delayedCall(2500, () => reloadIntoLobby());
         });
 
         room.onError((code, message) => {
@@ -488,9 +617,26 @@ export class Arena extends Phaser.Scene {
         const localState = this.localState();
 
         if (localState) {
+            // Voltou de uma queda: o servidor congelou o personagem enquanto
+            // isso, e a previsão local parou onde estava. Recomeçar dela seria
+            // reconciliar contra uma posição de antes da queda — o alvo salta
+            // e o boneco é arrastado. Aqui, e não no `onReconnect`, porque só
+            // agora existe estado do servidor de onde partir.
+            if (this.ressincronizar) {
+                this.ressincronizar = false;
+                this.resetPrediction(localState);
+                // Zera a janela de envio: o primeiro quadro depois de voltar
+                // manda a entrada atual na hora, sem esperar INPUT_SEND_MS.
+                this.lastInputSentAt = 0;
+            }
+
             // Partida decidida: o servidor congelou a simulação, então mandar
             // entrada e prever só criaria divergência para reconciliar depois.
-            if (this.matchWinner() < 0) {
+            // Sem conexão vale o mesmo, e por um motivo a mais: com o socket
+            // fechado o SDK ENFILEIRA o que for enviado e despeja tudo na
+            // volta, o que reviveria um "estou segurando o botão" de segundos
+            // atrás.
+            if (this.matchWinner() < 0 && this.conectado) {
                 this.sendInput(localState, now);
                 this.stepPrediction(localState, delta);
                 this.updateDeathScreen(localState);
@@ -515,7 +661,7 @@ export class Arena extends Phaser.Scene {
         //
         // Fica no `update`, e não no `sendInput`: aquele só roda com a partida
         // em curso, e a borda ficaria presa até a partida seguinte.
-        if (this.inputs.getDebugState().justPressed && this.room) this.room.send('dbg');
+        if (this.inputs.getDebugState().justPressed && this.conectado) this.room.send('dbg');
 
         this.inputs.setDashCooldown(this.dashCooldownRatio(localState));
         this.xpBar.update(time);
@@ -1065,7 +1211,11 @@ export class Arena extends Phaser.Scene {
         if (!localState.alive) {
             if (!this.deathScreen.isVisible) {
                 this.localCharging = false;
-                this.deathScreen.show(() => this.room.send('r'));
+                // O clique vem depois, e nesse meio-tempo a conexão pode ter
+                // caído: enviar ali só encheria a fila do SDK.
+                this.deathScreen.show(() => {
+                    if (this.conectado) this.room.send('r');
+                });
             }
         } else if (this.deathScreen.isVisible) {
             this.deathScreen.hide();
@@ -1159,7 +1309,7 @@ export class Arena extends Phaser.Scene {
      * nenhuma deste lado.
      */
     acceptRematch() {
-        if (this.wantRematch || !this.room) return;
+        if (this.wantRematch || !this.conectado) return;
 
         this.wantRematch = true;
         // O MENU continua clicável de propósito: se a sala nova demorar (ou

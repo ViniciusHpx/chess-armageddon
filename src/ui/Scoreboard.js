@@ -1,3 +1,5 @@
+import { viewportOf } from '../utils/Viewport.js';
+
 /**
  * Placar de abates e mortes, exibido enquanto o TAB está pressionado.
  *
@@ -34,11 +36,11 @@ export default class Scoreboard {
         this.getRows = getRows;
         this._nextRefreshAt = 0;
 
-        const { width, height } = scene.cameras.main;
+        this.viewport = viewportOf(scene);
 
         this.panel = scene.add.graphics();
 
-        this.text = scene.add.text(width / 2, height / 2, '', {
+        this.text = scene.add.text(0, 0, '', {
             // Monoespaçada de propósito: as colunas são alinhadas com espaços,
             // o que troca dez objetos de texto por um só.
             fontFamily: 'Consolas, "Courier New", monospace',
@@ -55,6 +57,21 @@ export default class Scoreboard {
         });
 
         this._bindToggleKey();
+
+        this.layout();
+        this.viewport.onResize(() => this.layout());
+    }
+
+    /**
+     * Centralizado na tela. O fundo é dimensionado pelo texto (`_drawPanel`),
+     * então basta mover o texto e redesenhar — e só se o painel estiver aberto,
+     * porque fechado não há nada para redesenhar.
+     */
+    layout() {
+        const { x, y } = this.viewport.center();
+        this.text.setPosition(x, y);
+
+        if (this.isVisible) this._drawPanel();
     }
 
     /**

@@ -1,3 +1,5 @@
+import { viewportOf } from '../utils/Viewport.js';
+
 /**
  * Tela de fim de partida: arte de VITÓRIA ou DERROTA, o placar final e as duas
  * saídas (REVANCHE e MENU).
@@ -21,26 +23,38 @@ const PALETA = {
 /** Raios do fundo. Número ímpar para nenhum ficar exatamente na horizontal. */
 const RAIOS = 15;
 
+/**
+ * Deslocamentos a partir do centro da tela. A tela inteira é montada em volta
+ * de `CENTRO_Y`, um pouco acima do meio para os botões caberem abaixo do
+ * título sem encostar na borda.
+ */
+const CENTRO_Y = -40;
+const PLACAR_Y = 70;
+const BOTOES_Y = 160;
+const BOTOES_X = 150;
+const STATUS_Y = 220;
+
 export default class ResultScreen {
     constructor(scene) {
         this.scene = scene;
         this._onRematch = null;
         this._onMenu = null;
 
-        const { width, height } = scene.cameras.main;
-        this.width = width;
-        this.height = height;
+        this.viewport = viewportOf(scene);
 
-        const centroY = height / 2 - 40;
+        // Cor do último resultado mostrado. Guardada porque a arte é um
+        // `Graphics` em coordenadas absolutas: mudar o tamanho da tela com a
+        // tela de resultado aberta obriga a redesenhá-la.
+        this._cores = null;
 
-        this.overlay = scene.add.rectangle(0, 0, width, height, 0x000000, 0.78).setOrigin(0);
+        this.overlay = scene.add.rectangle(0, 0, 1, 1, 0x000000, 0.78).setOrigin(0);
 
         // Arte do resultado: raios saindo do título e uma faixa atrás dele.
         // É desenhada (e não uma imagem) para acompanhar a cor do resultado
         // sem carregar dois arquivos que só diferem no tom.
         this.arte = scene.add.graphics();
 
-        this.titulo = scene.add.text(width / 2, centroY, '', {
+        this.titulo = scene.add.text(0, 0, '', {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '84px',
             color: '#ffffff',
@@ -48,7 +62,7 @@ export default class ResultScreen {
             strokeThickness: 10
         }).setOrigin(0.5);
 
-        this.placar = scene.add.text(width / 2, centroY + 70, '', {
+        this.placar = scene.add.text(0, 0, '', {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '30px',
             color: '#ffffff',
@@ -56,12 +70,12 @@ export default class ResultScreen {
             strokeThickness: 6
         }).setOrigin(0.5);
 
-        this.rematch = this.criarBotao(width / 2 - 150, centroY + 160, 'REVANCHE');
-        this.menu = this.criarBotao(width / 2 + 150, centroY + 160, 'MENU');
+        this.rematch = this.criarBotao(0, 0, 'REVANCHE');
+        this.menu = this.criarBotao(0, 0, 'MENU');
 
         // Aviso de "esperando a sala nova": ocupa o lugar do que seria um
         // popup do navegador, que é justamente o que não se quer aqui.
-        this.status = scene.add.text(width / 2, centroY + 220, '', {
+        this.status = scene.add.text(0, 0, '', {
             fontFamily: 'Arial, sans-serif',
             fontSize: '18px',
             color: '#cfcfcf'
@@ -78,6 +92,40 @@ export default class ResultScreen {
         });
 
         this.setInterativo(false);
+
+        this.layout();
+        this.viewport.onResize(() => this.layout());
+    }
+
+    /**
+     * Cobre a tela toda e centraliza o conteúdo, como o `DeathScreen`.
+     *
+     * A arte só é redesenhada se já houve um resultado: antes disso não há cor
+     * definida e não há nada na tela.
+     */
+    layout() {
+        const vp = this.viewport;
+
+        this.overlay.setPosition(0, 0).setSize(vp.width, vp.height);
+
+        const centro = vp.center(0, CENTRO_Y);
+        this.cx = centro.x;
+        this.cy = centro.y;
+
+        this.titulo.setPosition(centro.x, centro.y);
+        this.placar.setPosition(centro.x, centro.y + PLACAR_Y);
+        this.status.setPosition(centro.x, centro.y + STATUS_Y);
+
+        this.moverBotao(this.rematch, centro.x - BOTOES_X, centro.y + BOTOES_Y);
+        this.moverBotao(this.menu, centro.x + BOTOES_X, centro.y + BOTOES_Y);
+
+        if (this._cores) this.desenharArte(this._cores);
+    }
+
+    /** @param {{fundo: Phaser.GameObjects.Rectangle, label: Phaser.GameObjects.Text}} botao */
+    moverBotao(botao, x, y) {
+        botao.fundo.setPosition(x, y);
+        botao.label.setPosition(x, y);
     }
 
     /** Botão no mesmo estilo do RENASCER: retângulo + rótulo, com hover. */
@@ -109,6 +157,7 @@ export default class ResultScreen {
         this._onMenu = onMenu;
 
         const cores = won ? PALETA.win : PALETA.lose;
+        this._cores = cores;
 
         this.desenharArte(cores);
         this.titulo.setText(won ? 'VITÓRIA' : 'DERROTA').setColor(cores.titulo);
@@ -121,8 +170,8 @@ export default class ResultScreen {
 
     /** Raios + faixa atrás do título, na cor do resultado. */
     desenharArte(cores) {
-        const cx = this.width / 2;
-        const cy = this.height / 2 - 40;
+        const cx = this.cx;
+        const cy = this.cy;
 
         this.arte.clear();
 
@@ -130,7 +179,9 @@ export default class ResultScreen {
         for (let i = 0; i < RAIOS; i++) {
             const a = (Math.PI * 2 * i) / RAIOS;
             const abertura = Math.PI / RAIOS / 1.6;
-            const raio = Math.max(this.width, this.height);
+            // Os raios têm de sair da tela por todos os lados, em qualquer
+            // proporção: o maior lado é sempre suficiente.
+            const raio = Math.max(this.viewport.width, this.viewport.height);
             this.arte.beginPath();
             this.arte.moveTo(cx, cy);
             this.arte.lineTo(cx + Math.cos(a - abertura) * raio, cy + Math.sin(a - abertura) * raio);

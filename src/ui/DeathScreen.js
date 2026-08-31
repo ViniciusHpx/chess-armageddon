@@ -2,18 +2,28 @@
  * Tela de morte: overlay escuro com "VOCÊ MORREU" e um botão de renascer.
  * Fica fixo na câmera (setScrollFactor(0)) e acima de toda a UI de input.
  */
+import { viewportOf } from '../utils/Viewport.js';
+
+/** Deslocamentos a partir do centro da tela. */
+const TITULO_Y = -80;
+const BOTAO_Y = 40;
+
 export default class DeathScreen {
     constructor(scene) {
         this.scene = scene;
         this._onRespawn = null;
 
-        const { width, height } = scene.cameras.main;
+        this.viewport = viewportOf(scene);
 
-        // Fundo escurecido — bloqueia visualmente a arena
-        this.overlay = scene.add.rectangle(0, 0, width, height, 0x000000, 0.65)
+        // Fundo escurecido — bloqueia visualmente a arena.
+        //
+        // Usa a tela INTEIRA, não a área útil: escurecer é para cobrir tudo,
+        // inclusive o que fica sob o notch. Quem respeita o recorte é o
+        // conteúdo clicável, e este está no centro.
+        this.overlay = scene.add.rectangle(0, 0, 1, 1, 0x000000, 0.65)
             .setOrigin(0);
 
-        this.title = scene.add.text(width / 2, height / 2 - 80, 'VOCÊ MORREU', {
+        this.title = scene.add.text(0, 0, 'VOCÊ MORREU', {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '64px',
             color: '#ff3b3b',
@@ -22,11 +32,11 @@ export default class DeathScreen {
         }).setOrigin(0.5);
 
         // Botão de renascer (retângulo + label)
-        this.button = scene.add.rectangle(width / 2, height / 2 + 40, 260, 70, 0x1e1e1e, 0.95)
+        this.button = scene.add.rectangle(0, 0, 260, 70, 0x1e1e1e, 0.95)
             .setStrokeStyle(3, 0xffffff, 0.9)
             .setInteractive({ useHandCursor: true });
 
-        this.buttonLabel = scene.add.text(width / 2, height / 2 + 40, 'RENASCER', {
+        this.buttonLabel = scene.add.text(0, 0, 'RENASCER', {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '32px',
             color: '#ffffff'
@@ -51,6 +61,23 @@ export default class DeathScreen {
         });
 
         this.button.disableInteractive();
+
+        this.layout();
+        this.viewport.onResize(() => this.layout());
+    }
+
+    /** Cobre a tela toda e centraliza o conteúdo. */
+    layout() {
+        const vp = this.viewport;
+
+        this.overlay.setPosition(0, 0).setSize(vp.width, vp.height);
+
+        const titulo = vp.center(0, TITULO_Y);
+        this.title.setPosition(titulo.x, titulo.y);
+
+        const botao = vp.center(0, BOTAO_Y);
+        this.button.setPosition(botao.x, botao.y);
+        this.buttonLabel.setPosition(botao.x, botao.y);
     }
 
     /**

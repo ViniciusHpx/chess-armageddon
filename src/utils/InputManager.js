@@ -1,4 +1,25 @@
 import { DEBUG_BUTTON_ENABLED } from '../constants/Mobile.js';
+import { viewportOf } from './Viewport.js';
+
+/**
+ * Onde cada controle fica, medido a partir do CANTO DE BAIXO da área útil da
+ * tela — nunca de um 1280 × 720 cravado.
+ *
+ * Os números são os mesmos de antes (o joystick sempre esteve a 120 px do
+ * canto de baixo à esquerda, o ataque a 100/120 do de baixo à direita), então
+ * na tela de referência o layout não mudou um pixel. O que mudou é de onde a
+ * conta parte: numa tela 20:9 o canto direito está em 1600, não em 1280, e os
+ * botões acompanham sozinhos.
+ */
+const JOYSTICK_ANCHOR = { x: 120, y: 120 };
+const JOYSTICK_BASE_RADIUS = 60;
+const JOYSTICK_THUMB_RADIUS = 30;
+
+const ATTACK_ANCHOR = { x: 100, y: 120 };
+const ATTACK_RADIUS = 50;
+
+const DASH_ANCHOR = { x: 185, y: 68 };
+const DEBUG_ANCHOR = { x: 268, y: 68 };
 
 /** Botão de ataque: vermelho cheio, opaco o bastante para ler no mapa claro. */
 const ATTACK_BTN_COLOR = 0xd91b1b;
@@ -116,6 +137,19 @@ class VirtualStick {
         this.moveTo(pointer);
     }
 
+    /**
+     * Muda a base de lugar (tela redimensionada, aparelho girado).
+     *
+     * Só o centro: quem devolve o miolo para cima dele é o `release()`, que o
+     * `layout()` chama logo em seguida — e que também é o certo a fazer com um
+     * dedo em cima, porque um vetor medido a partir da base ANTIGA daria um
+     * empurrão fantasma.
+     */
+    moveBase(x, y) {
+        this.baseX = x;
+        this.baseY = y;
+    }
+
     /** O evento é deste controle? */
     owns(pointer) {
         return this.active && this.pointerId === pointer.id;
@@ -170,7 +204,14 @@ export default class InputManager {
         this.spaceKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
         this.dashKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
 
-        this.createVirtualJoystick(120, scene.cameras.main.height - 120, 60, 30);
+        // Onde os controles ficam na tela. Uma instância por cena, e é ela
+        // que avisa quando a tela muda de tamanho.
+        this.viewport = viewportOf(scene);
+
+        // Os controles nascem em (0, 0) e o `layout()` no fim do construtor os
+        // coloca no lugar. Assim existe UM caminho que decide posição, o mesmo
+        // que roda no redimensionamento — não há como os dois divergirem.
+        this.createVirtualJoystick();
         this.createAttackStick();
         this.createDashButton();
         this.createDebugButton();
@@ -193,18 +234,66 @@ export default class InputManager {
         this._debugJustPressed = false;
 
         this.setupTouchEvents();
+
+        this.layout();
+        this.viewport.onResize(() => this.layout());
     }
 
-    createVirtualJoystick(x, y, baseR, thumbR) {
+    /**
+     * Coloca todo controle no seu canto da área útil da tela.
+     *
+     * Roda uma vez na criação e a cada redimensionamento. Nada é criado nem
+     * destruído aqui: os mesmos objetos mudam de lugar, então girar o aparelho
+     * não recria botão, textura nem listener.
+     */
+    layout() {
+        const vp = this.viewport;
+
+        const joystick = vp.bottomLeft(JOYSTICK_ANCHOR.x, JOYSTICK_ANCHOR.y);
+        this.moveStick.moveBase(joystick.x, joystick.y);
+        this.joystickBase.setPosition(joystick.x, joystick.y);
+
+        const ataque = vp.bottomRight(ATTACK_ANCHOR.x, ATTACK_ANCHOR.y);
+        this.attackStick.moveBase(ataque.x, ataque.y);
+        this.attackBase.setPosition(ataque.x, ataque.y);
+
+        // Devolve os dois miolos (e o ícone da espada) para cima das bases
+        // novas. Ver `VirtualStick.moveBase`.
+        this.moveStick.release();
+        this.attackStick.release();
+
+        const dash = vp.bottomRight(DASH_ANCHOR.x, DASH_ANCHOR.y);
+        this.dashBtnX = dash.x;
+        this.dashBtnY = dash.y;
+        this.dashBtn.setPosition(dash.x, dash.y);
+        this.dashIcon.setPosition(dash.x, dash.y);
+
+        // A fatia de recarga é desenhada em coordenadas absolutas dentro de um
+        // `Graphics`, então mover o botão não a leva junto: -1 força o
+        // redesenho no lugar novo.
+        this._dashCooldownDrawn = -1;
+        this.setDashCooldown(this._dashCooldownRatio);
+
+        if (this.debugBtn) {
+            const debug = vp.bottomRight(DEBUG_ANCHOR.x, DEBUG_ANCHOR.y);
+            this.debugBtn.setPosition(debug.x, debug.y);
+            this.debugLabel.setPosition(debug.x, debug.y);
+        }
+    }
+
+    createVirtualJoystick() {
+        const baseR = JOYSTICK_BASE_RADIUS;
+        const thumbR = JOYSTICK_THUMB_RADIUS;
+
         // O raio de pega é o de sempre (`maxDist + 50`): o joystick de
         // movimento continua tão tolerante quanto era.
-        this.moveStick = new VirtualStick(x, y, baseR, thumbR, (baseR - thumbR) + 50);
+        this.moveStick = new VirtualStick(0, 0, baseR, thumbR, (baseR - thumbR) + 50);
 
-        this.joystickBase = this.scene.add.circle(x, y, baseR, 0xffffff, 0.3);
+        this.joystickBase = this.scene.add.circle(0, 0, baseR, 0xffffff, 0.3);
         this.joystickBase.setScrollFactor(0);
         this.joystickBase.setDepth(CONTROLS_DEPTH);
 
-        this.joystickThumb = this.scene.add.circle(x, y, thumbR, 0xffffff, 0.6);
+        this.joystickThumb = this.scene.add.circle(0, 0, thumbR, 0xffffff, 0.6);
         this.joystickThumb.setScrollFactor(0);
         this.joystickThumb.setDepth(CONTROLS_DEPTH + 1);
 
@@ -224,10 +313,9 @@ export default class InputManager {
      * escolhida, sem nada novo desenhado por quadro.
      */
     createAttackStick() {
-        const { width, height } = this.scene.cameras.main;
-        const x = width - 100;
-        const y = height - 120;
-        const raio = 50;
+        const raio = ATTACK_RADIUS;
+        const x = 0;
+        const y = 0;
 
         // Raio de pega = o próprio raio do controle. Maior que isso invadiria o
         // botão de dash, que está a ~100 px do centro daqui.
@@ -297,9 +385,8 @@ export default class InputManager {
     }
 
     createDashButton() {
-        const { width, height } = this.scene.cameras.main;
-        const x = width - 185;
-        const y = height - 68;
+        const x = 0;
+        const y = 0;
 
         this.dashBtnX = x;
         this.dashBtnY = y;
@@ -345,12 +432,11 @@ export default class InputManager {
         // troca a peça no meio da briga. Ver `constants/Mobile.js`.
         if (!DEBUG_BUTTON_ENABLED) return;
 
-        const { width, height } = this.scene.cameras.main;
         // Alinhado com o dash e à esquerda dele. A distância entre centros (83)
         // é maior que a soma dos raios (64), então não há como acertar os dois
-        // com o mesmo toque.
-        const x = width - 268;
-        const y = height - 68;
+        // com o mesmo toque. Ver `DEBUG_ANCHOR`.
+        const x = 0;
+        const y = 0;
 
         this.debugBtn = this.scene.add.circle(x, y, DEBUG_BTN_RADIUS, DEBUG_BTN_COLOR, DEBUG_BTN_ALPHA)
             .setInteractive()

@@ -1,4 +1,5 @@
 import { xpProgress, RANKS, RANK_ORDER } from '../constants/Hierarchy.js';
+import { viewportOf, HUD_MARGIN } from '../utils/Viewport.js';
 
 /**
  * Barra de experiência do jogador local, usada pelos dois modos.
@@ -14,8 +15,16 @@ import { xpProgress, RANKS, RANK_ORDER } from '../constants/Hierarchy.js';
 /** Faixa da interface: acima dos personagens, junto do HUD de texto. */
 const DEPTH = 9000;
 
-const X = 16;
-const Y = 42;
+/**
+ * Distância entre o topo útil da tela e a barra.
+ *
+ * São os mesmos 42 px de antes, agora escritos como o que sempre foram: a
+ * margem padrão do HUD mais uma linha de texto, para a barra cair logo abaixo
+ * do status da `Arena` (no modo offline aquela linha não existe, e o espaço em
+ * branco não incomoda).
+ */
+const ALTURA_DA_LINHA_DE_STATUS = 26;
+
 const LARGURA = 200;
 const ALTURA = 12;
 
@@ -44,6 +53,8 @@ export default class XpBar {
         this.scene = scene;
         this.getXp = getXp;
 
+        this.viewport = viewportOf(scene);
+
         this.graphics = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH);
 
         const estilo = {
@@ -53,13 +64,13 @@ export default class XpBar {
             stroke: '#000000',
             strokeThickness: 3
         };
-        this.label = scene.add.text(X, Y + ALTURA + 3, '', estilo)
+        this.label = scene.add.text(0, 0, '', estilo)
             .setScrollFactor(0)
             .setDepth(DEPTH);
 
         // Aviso de nível novo. Um Text só, reaproveitado — nada é criado por
         // evento.
-        this.aviso = scene.add.text(X, Y - 20, '', { ...estilo, fontSize: '18px', color: '#ffe08a' })
+        this.aviso = scene.add.text(0, 0, '', { ...estilo, fontSize: '18px', color: '#ffe08a' })
             .setScrollFactor(0)
             .setDepth(DEPTH)
             .setVisible(false);
@@ -67,6 +78,27 @@ export default class XpBar {
 
         this._xpDesenhado = -1;
         this._nivelAnterior = null;
+
+        this.layout();
+        this.viewport.onResize(() => this.layout());
+    }
+
+    /**
+     * Ancorada no canto superior esquerdo da área útil.
+     *
+     * O `-1` no fim marca a barra como não desenhada: ela é um `Graphics` com
+     * coordenadas absolutas, então mudar de canto exige redesenhar. Acontece no
+     * quadro seguinte, junto com o `update` que já existe.
+     */
+    layout() {
+        const { x, y } = this.viewport.topLeft(HUD_MARGIN, HUD_MARGIN + ALTURA_DA_LINHA_DE_STATUS);
+        this.x = x;
+        this.y = y;
+
+        this.label.setPosition(x, y + ALTURA + 3);
+        this.aviso.setPosition(x, y - 20);
+
+        this._xpDesenhado = -1;
     }
 
     /** @param {number} time Relógio da cena, só para expirar o aviso. */
@@ -99,13 +131,13 @@ export default class XpBar {
         g.clear();
 
         g.fillStyle(COR_FUNDO, 0.75);
-        g.fillRect(X, Y, LARGURA, ALTURA);
+        g.fillRect(this.x, this.y, LARGURA, ALTURA);
 
         g.fillStyle(max ? COR_BARRA_MAX : COR_BARRA, 0.95);
-        g.fillRect(X, Y, LARGURA * preenchido, ALTURA);
+        g.fillRect(this.x, this.y, LARGURA * preenchido, ALTURA);
 
         g.lineStyle(2, 0x000000, 0.8);
-        g.strokeRect(X, Y, LARGURA, ALTURA);
+        g.strokeRect(this.x, this.y, LARGURA, ALTURA);
 
         this.label.setText(max
             ? `NÍVEL ${level} · MAX · ${xp} XP`

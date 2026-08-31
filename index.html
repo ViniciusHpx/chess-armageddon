@@ -2,7 +2,14 @@
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <!--
+            `viewport-fit=cover` faz a página ocupar a tela INTEIRA do celular,
+            por baixo do notch e da barra de gestos. É também o que liga os
+            `env(safe-area-inset-*)` abaixo: sem ele o navegador os reporta como
+            zero e o HUD não teria como desviar do recorte.
+        -->
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1.0, viewport-fit=cover">
         <title>Chess Armageddon</title>
         <style>
             /* Reset CSS: Please avoid making changes here unless you know what you're doing :) */
@@ -17,6 +24,39 @@
             html, body {
                 width: 100%;
                 height: 100%;
+                /*
+                    Sem isto, arrastar o joystick perto da borda rola a página
+                    no celular em vez de mover o personagem.
+                */
+                overflow: hidden;
+                overscroll-behavior: none;
+            }
+
+            /*
+                Recortes do sistema (notch, câmera, barra de gestos), expostos ao
+                JavaScript. O `env()` só pode ser lido em CSS; guardado numa
+                variável, o `Viewport.js` o lê com `getComputedStyle` e converte
+                para as unidades lógicas do jogo.
+
+                O `0px` de reserva é o valor no desktop e em qualquer aparelho sem
+                recorte, que é o que mantém o layout de hoje intacto.
+            */
+            :root {
+                --safe-top: env(safe-area-inset-top, 0px);
+                --safe-right: env(safe-area-inset-right, 0px);
+                --safe-bottom: env(safe-area-inset-bottom, 0px);
+                --safe-left: env(safe-area-inset-left, 0px);
+            }
+
+            /*
+                O container do jogo precisa ter TAMANHO de verdade: o Phaser mede
+                justamente ele para decidir o tamanho do canvas, e uma `div` sem
+                estilo tem altura zero (o próprio `ScaleManager` comenta isso no
+                código). Preso às quatro bordas, ele vale sempre a janela inteira.
+            */
+            #game-container {
+                position: fixed;
+                inset: 0;
             }
     
             body {

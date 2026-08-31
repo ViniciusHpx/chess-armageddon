@@ -109,3 +109,65 @@ export function storePlayerName(name) {
 export function resolvePlayerName() {
     return storedPlayerName() || "";
 }
+
+/**
+ * Janela que o servidor guarda o personagem esperando o jogador voltar.
+ *
+ * Espelha `RECONNECTION_SECONDS` de `../chess-armageddon-server/src/sim/constants.ts`,
+ * no mesmo regime dos outros números compartilhados (ver `Hierarchy.js`): quem
+ * manda é o servidor, aqui é cópia. Serve só para o cliente parar de tentar
+ * quando não há mais vaga para recuperar — tentar depois disso é pedir uma
+ * sessão que o `allowReconnection` já rejeitou.
+ */
+export const RECONNECTION_SECONDS = 20;
+
+/**
+ * Ajusta a reconexão automática do SDK à janela do servidor.
+ *
+ * O SDK 0.17 já reconecta sozinho: ao cair, ele repete o `reconnectionToken`
+ * no MESMO objeto `Room`, então estado, decoder e listeners continuam de pé e
+ * não existe sala nova nem ator duplicado. O que ele não sabe é quanto tempo o
+ * NOSSO servidor guarda a vaga — o padrão são 15 tentativas com espera
+ * exponencial, que se estendem por quase um minuto batendo numa sessão que
+ * venceu aos 20 s.
+ *
+ * Então o número de tentativas não é cravado: é calculado a partir da própria
+ * escala de espera do SDK, e para de contar quando a soma passaria da janela.
+ * Mudar `RECONNECTION_SECONDS` (ou a espera abaixo) continua dando um total
+ * coerente, sem uma segunda constante para manter em dia.
+ */
+export function tuneReconnection(room) {
+    const r = room.reconnection;
+
+    // Primeira tentativa quase imediata (queda curta de rede volta na hora) e
+    // teto de 2 s entre elas: com a janela de 20 s, esperar mais é gastar a
+    // vaga dormindo.
+    r.delay = 250;
+    r.minDelay = 250;
+    r.maxDelay = 2000;
+
+    // O padrão (5 s) recusa reconectar quem caiu logo depois de entrar — no
+    // celular é exatamente o caso de quem troca de aplicativo assim que a
+    // partida abre. 1 s ainda cobre o que essa trava existe para evitar: uma
+    // sala que aceita e derruba todo mundo em seguida.
+    r.minUptime = 1000;
+
+    r.maxRetries = retriesWithin(r, RECONNECTION_SECONDS * 1000);
+}
+
+/** Quantas tentativas cabem na janela, pela mesma escala de espera do SDK. */
+function retriesWithin(r, windowMs) {
+    let elapsed = 0;
+    let tentativas = 0;
+
+    for (;;) {
+        const espera = Math.min(r.maxDelay, Math.max(r.minDelay, r.backoff(tentativas + 1, r.delay)));
+        if (elapsed + espera > windowMs) break;
+
+        elapsed += espera;
+        tentativas++;
+    }
+
+    // Sempre ao menos uma: janela curta não pode virar "nem tenta".
+    return Math.max(1, tentativas);
+}

@@ -5,6 +5,7 @@ import { openLobby, hideLobby } from './ui/Lobby.js';
 import {
     storedPlayerName, storePlayerName, setJoinChoice, resolveJoinChoice, resolveEndpoint
 } from './net/netconfig.js';
+import { logicalSize, installViewportScaling } from './utils/Viewport.js';
 
 /**
  * Dois modos, escolhidos pela URL:
@@ -42,13 +43,23 @@ if (!offline && !resolveJoinChoice()) {
 }
 hideLobby();
 
+/**
+ * Tamanho LÓGICO do jogo: altura sempre 720, largura conforme a proporção da
+ * tela. Ver `utils/Viewport.js` — é o FOV vertical fixo.
+ *
+ * Calculado aqui, e não depois de o jogo subir, para a primeira cena já nascer
+ * com a medida certa: montar o HUD em 1280 × 720 para só então reposicionar
+ * tudo apareceria como um tranco no primeiro quadro.
+ */
+const { width, height } = logicalSize(window.innerWidth, window.innerHeight);
+
 const config = {
     type: Phaser.AUTO,
     title: 'Chess Armageddon',
     description: '',
     parent: 'game-container',
-    width: 1280,
-    height: 720,
+    width,
+    height,
     backgroundColor: '#000000',
     pixelArt: false,
     // O banner do Phaser no console custa pouco, mas não serve para nada em
@@ -95,6 +106,15 @@ const config = {
          */
     },
     scale: {
+        /**
+         * Continua `FIT`, e de propósito.
+         *
+         * O que muda é o tamanho lógico acima: ele nasce com a MESMA proporção
+         * da tela, e duas proporções iguais fazem o FIT preencher tudo sem
+         * sobrar barra. O `autoCenter` só age quando a proporção é travada
+         * pelos limites do `Viewport` (retrato, ultralargo) — aí a barra existe
+         * e é melhor centralizada.
+         */
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH
     },
@@ -104,4 +124,9 @@ const config = {
     }
 }
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+// A partir daqui, girar o aparelho ou redimensionar a janela recalcula o
+// tamanho lógico. Quem reposiciona o HUD são os próprios componentes, cada um
+// inscrito no `Viewport` da sua cena.
+installViewportScaling(game);
