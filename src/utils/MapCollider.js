@@ -9,6 +9,20 @@ const SLIDE_ANGLES = [Math.PI / 6, Math.PI / 3];
 const SLIDE_MIN_AVANCO = 0.05;
 
 export default class MapCollider {
+    /**
+     * Lê o PNG da máscara uma vez e guarda o terreno como BITSET.
+     *
+     * O `getImageData` devolve RGBA — 4 bytes por pixel, 16 MB para os
+     * 2496 x 1684 da metade. Só que a máscara tem quatro classes de terreno e
+     * nada mais: o valor exato do pixel não interessa a ninguém depois de
+     * classificado. Guardar 1 bit por pixel por classe custa 3 x 513 KB, e o
+     * RGBA, o canvas temporário e a textura do Phaser são liberados no fim do
+     * construtor.
+     *
+     * É o mesmo formato do servidor (`sim/CollisionMask.ts`), que já nasceu
+     * assim — os dois lados agora guardam o terreno do mesmo jeito, o que
+     * também torna a comparação entre eles direta.
+     */
     constructor(scene, textureKey) {
         this.width = WORLD_WIDTH;
         this.height = WORLD_HEIGHT;
@@ -16,39 +30,92 @@ export default class MapCollider {
 
         // Pega a imagem base carregada pelo Phaser
         const srcImage = scene.textures.get(textureKey).getSourceImage();
-        
+
         // Desenha num canvas em memória (apenas da metade original)
         const canvas = document.createElement('canvas');
         canvas.width = this.halfWidth;
         canvas.height = this.height;
-        
+
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(srcImage, 0, 0);
-        
-        // Extrai a array 1D de bytes (RGBA)
-        this.pixelData = ctx.getImageData(0, 0, this.halfWidth, this.height).data;
+
+        // Classifica cada pixel e joga fora o RGBA.
+        this.buildTerrainBits(ctx.getImageData(0, 0, this.halfWidth, this.height).data);
+
+        // Encolher o canvas devolve o backing store (outros 16 MB) sem esperar
+        // o coletor: o `ImageData` acima já não é referenciado por ninguém.
+        canvas.width = 0;
+        canvas.height = 0;
+
+        // A máscara NÃO é desenhada na tela — o mapa visível é `arena.png`.
+        // Depois de virar bitset, a textura só ocuparia RAM e VRAM (mais 16 MB
+        // de cada). Quem carrega é o `preload()` da cena, e é aqui que ela
+        // deixa de ter uso, então é aqui que ela sai.
+        scene.textures.remove(textureKey);
     }
 
-    /** Verifica se um ponto exato do mapa é caminhável (branco). */
-    isWalkable(x, y) {
-        let px = Math.floor(x);
-        let py = Math.floor(y);
+    /**
+     * Monta os três bitsets a partir do RGBA da metade esquerda.
+     *
+     * As classes são as mesmas de sempre, com os mesmos limiares (o limiar
+     * perdoa o anti-aliasing do desenho):
+     *
+     *     chão   r > 128
+     *     ponte  chão E g <= 128   (o vermelho 255,0,0)
+     *     água   NÃO chão E b > 128
+     *
+     * `walk` é chão OU água — exatamente o `r > 128 || b > 128` que
+     * `isWalkable` calculava a cada consulta. `bridge` é subconjunto de
+     * `walk`; `water` também, e os dois são disjuntos entre si.
+     */
+    buildTerrainBits(rgba) {
+        const total = this.halfWidth * this.height;
+        const bytes = Math.ceil(total / 8);
 
-        if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
+        /** 1 bit por pixel: 1 = dá para andar (chão OU água). */
+        this.walkBits = new Uint8Array(bytes);
+        /** 1 bit por pixel: 1 = água. Subconjunto de `walkBits`. */
+        this.waterBits = new Uint8Array(bytes);
+        /** 1 bit por pixel: 1 = tabuleiro de ponte. Subconjunto de `walkBits`. */
+        this.bridgeBits = new Uint8Array(bytes);
+
+        for (let i = 0; i < total; i++) {
+            const chao = rgba[i * 4] > 128;
+            const ponte = chao && rgba[i * 4 + 1] <= 128;
+            const agua = !chao && rgba[i * 4 + 2] > 128;
+
+            const byte = i >> 3;
+            const bit = 1 << (i & 7);
+
+            if (chao || agua) this.walkBits[byte] |= bit;
+            if (agua) this.waterBits[byte] |= bit;
+            if (ponte) this.bridgeBits[byte] |= bit;
+        }
+    }
+
+    /**
+     * Índice do pixel nos bitsets, ou -1 fora do mapa.
+     *
+     * Concentra num lugar só o arredondamento, o teste de borda e o
+     * espelhamento da metade direita — as três coisas que `isWalkable`,
+     * `isWater` e `isBridge` repetiam idênticas.
+     */
+    bitIndex(x, y) {
+        let px = Math.floor(x);
+        const py = Math.floor(y);
+
+        if (px < 0 || py < 0 || px >= this.width || py >= this.height) return -1;
 
         // Regra do espelhamento para a metade direita
-        if (px >= this.halfWidth) {
-            px = this.width - 1 - px;
-        }
+        if (px >= this.halfWidth) px = this.width - 1 - px;
 
-        // Calcula o índice no array de bytes (pixel = y * largura + x) * 4 canais
-        const index = (py * this.halfWidth + px) * 4;
-        const r = this.pixelData[index];
-        const b = this.pixelData[index + 2];
+        return py * this.halfWidth + px;
+    }
 
-        // Branco (vermelho > 128) é chão; azul é água, e dá para andar nos dois.
-        // O limiar (em vez de "é preto?") perdoa o anti-aliasing do desenho.
-        return r > 128 || b > 128;
+    /** Verifica se um ponto exato do mapa é caminhável (chão ou água). */
+    isWalkable(x, y) {
+        const i = this.bitIndex(x, y);
+        return i >= 0 && (this.walkBits[i >> 3] & (1 << (i & 7))) !== 0;
     }
 
     /**
@@ -56,17 +123,11 @@ export default class MapCollider {
      *
      * Água é o azul da máscara: navegável como o chão, só que mais lenta
      * (`WATER_SPEED_FACTOR`). Quem pinta é `scripts/paint-water.mjs`, no
-     * servidor; aqui só se lê o pixel.
+     * servidor; aqui só se lê o bit.
      */
     isWater(x, y) {
-        let px = Math.floor(x);
-        const py = Math.floor(y);
-
-        if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
-        if (px >= this.halfWidth) px = this.width - 1 - px;
-
-        const index = (py * this.halfWidth + px) * 4;
-        return this.pixelData[index] <= 128 && this.pixelData[index + 2] > 128;
+        const i = this.bitIndex(x, y);
+        return i >= 0 && (this.waterBits[i >> 3] & (1 << (i & 7))) !== 0;
     }
 
     /**
@@ -77,14 +138,8 @@ export default class MapCollider {
      * de `canCross`. Quem pinta é `scripts/paint-bridges.mjs`, no servidor.
      */
     isBridge(x, y) {
-        let px = Math.floor(x);
-        const py = Math.floor(y);
-
-        if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
-        if (px >= this.halfWidth) px = this.width - 1 - px;
-
-        const index = (py * this.halfWidth + px) * 4;
-        return this.pixelData[index] > 128 && this.pixelData[index + 1] <= 128;
+        const i = this.bitIndex(x, y);
+        return i >= 0 && (this.bridgeBits[i >> 3] & (1 << (i & 7))) !== 0;
     }
 
     /**

@@ -12,14 +12,18 @@
 /**
  * O botão DEBUG aparece?
  *
- * Ele avança a peça no ciclo (peão → ... → rainha → peão) sem custar XP: é
- * ferramenta de teste, e num celular fica no alcance do polegar direito, junto
- * do ataque e do dash. Um toque errado no meio da briga troca a peça do
- * jogador — no desktop dá para conviver, num aparelho de toque não.
+ * Ele avança a peça no ciclo (peão → ... → rainha → peão) sem custar XP. É
+ * ferramenta de DESENVOLVIMENTO: serve para trocar de peça na hora e conferir
+ * alcance, tamanho, promoção e travessia do cavalo sem ter de matar cinco
+ * inimigos antes.
  *
- * Desligado aqui, `InputManager` não cria o botão e `getDebugState()` passa a
+ * Fica LIGADO enquanto o jogo está em desenvolvimento e teste — inclusive no
+ * navegador e no aparelho, que é onde a validação acontece. Quem desliga é o
+ * build de produção, mais adiante, junto com o resto das ferramentas de teste;
+ * até lá, mexer nisto só atrapalha quem está validando.
+ *
+ * Desligado, `InputManager` não cria o botão e `getDebugState()` passa a
  * devolver sempre `justPressed: false`. Nada mais muda: a mensagem `"dbg"` do
- * protocolo continua existindo e o servidor continua aceitando — quem quiser
- * testar promoção é só voltar esta flag para `true`.
+ * protocolo continua existindo e o servidor continua aceitando.
  */
-export const DEBUG_BUTTON_ENABLED = false;
+export const DEBUG_BUTTON_ENABLED = true;
