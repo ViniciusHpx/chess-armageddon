@@ -19,6 +19,7 @@ import { ARENA_PATH, COLLISION_PATH, WORLD_WIDTH, WORLD_HEIGHT, HALF_WORLD_WIDTH
 import MapCollider from '../utils/MapCollider.js';
 import { createHealZoneFx } from '../utils/HealZoneFx.js';
 import { viewportOf, HUD_MARGIN } from '../utils/Viewport.js';
+import { TEXT_RESOLUTION } from '../utils/RenderPolicy.js';
 import { ELLIPSE_RATIO } from '../utils/CollisionResolver.js';
 
 /**
@@ -367,7 +368,10 @@ export class Arena extends Phaser.Scene {
             fontSize: '16px',
             color: '#ffffff',
             stroke: '#000000',
-            strokeThickness: 4
+            strokeThickness: 4,
+            // O buffer de 720 linhas é ampliado pelo compositor até a tela do
+            // aparelho; a textura do texto compensa. Ver `RenderPolicy.js`.
+            resolution: TEXT_RESOLUTION
         };
 
         this.viewport = viewportOf(this);
@@ -386,6 +390,10 @@ export class Arena extends Phaser.Scene {
             .setDepth(9000);
 
         this.killFeedLines = [];
+
+        // Último placar DESENHADO. Ver `updateTeamScore`.
+        this._placarMeu = null;
+        this._placarOutro = null;
 
         // Placar dos times. Só aparece nos modos com condição de vitória —
         // hoje o `team_deathmatch` —, senão seria um número sem meta.
@@ -644,8 +652,13 @@ export class Arena extends Phaser.Scene {
             this.updateMatchEnd(localState);
         }
 
-        for (const [key, actor] of this.actors) {
-            const predicted = (key === this.room?.sessionId && this.predReady)
+        // `values()` e não `entries()`: iterar o `Map` com desestruturação
+        // materializa um array `[chave, valor]` por ator por quadro. O `key`
+        // servia só para achar o ator local, e `isLocal` já é exatamente essa
+        // comparação, feita uma vez no `onAdd` — o `sessionId` não muda, nem
+        // depois de reconectar.
+        for (const actor of this.actors.values()) {
+            const predicted = (actor.isLocal && this.predReady)
                 ? { x: this.predX, y: this.predY }
                 : null;
 
@@ -1257,6 +1270,13 @@ export class Arena extends Phaser.Scene {
         // de vista de quem joga, como o resto da interface.
         const meu = this.localTeam === 1 ? enemy : ally;
         const outro = this.localTeam === 1 ? ally : enemy;
+
+        // O placar muda por abate, não por quadro. `setText` já descarta texto
+        // igual, mas a string era MONTADA antes de ele poder descartá-la — 60
+        // strings por segundo jogadas fora. Comparar dois números não aloca.
+        if (meu === this._placarMeu && outro === this._placarOutro) return;
+        this._placarMeu = meu;
+        this._placarOutro = outro;
 
         this.teamScoreText.setText(`SEU TIME ${meu}  x  ${outro} INIMIGOS   (até ${TEAM_KILL_LIMIT})`);
     }

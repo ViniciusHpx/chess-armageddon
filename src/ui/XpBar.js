@@ -1,5 +1,6 @@
 import { xpProgress, RANKS, RANK_ORDER } from '../constants/Hierarchy.js';
 import { viewportOf, HUD_MARGIN } from '../utils/Viewport.js';
+import { TEXT_RESOLUTION } from '../utils/RenderPolicy.js';
 
 /**
  * Barra de experiência do jogador local, usada pelos dois modos.
@@ -62,7 +63,8 @@ export default class XpBar {
             fontSize: '13px',
             color: '#ffffff',
             stroke: '#000000',
-            strokeThickness: 3
+            strokeThickness: 3,
+            resolution: TEXT_RESOLUTION
         };
         this.label = scene.add.text(0, 0, '', estilo)
             .setScrollFactor(0)

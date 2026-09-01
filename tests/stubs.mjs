@@ -11,17 +11,35 @@ const chain = new Proxy(function () {}, {
 
 globalThis.Phaser = {
     Scene: class { constructor() {} },
-    Core: { Events: { BLUR: 'blur', HIDDEN: 'hidden' } },
+    Core: {
+        Events: {
+            BLUR: 'blur', HIDDEN: 'hidden',
+            PRE_STEP: 'prestep', STEP: 'step', POST_STEP: 'poststep',
+            PRE_RENDER: 'prerender', POST_RENDER: 'postrender',
+        },
+    },
     Physics: { Arcade: { Sprite: Base } },
     GameObjects: { Sprite: Base, Container: Base, Graphics: Base, Image: Base },
     Math: {
-        Between: (a) => a, FloatBetween: (a) => a, Clamp: (v) => v,
-        Distance: { Between: () => 0 }, Angle: { Between: () => 0 },
+        Between: (a) => a, FloatBetween: (a) => a,
+        // Implementacoes reais: os testes de desenho dependem do RESULTADO,
+        // nao so de a funcao existir.
+        Clamp: (v, min, max) => Math.min(max, Math.max(min, v)),
+        Linear: (p0, p1, t) => (p1 - p0) * t + p0,
+        Distance: { Between: (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1) },
+        Angle: { Between: (x1, y1, x2, y2) => Math.atan2(y2 - y1, x2 - x1) },
     },
     BlendModes: { ADD: 1, NORMAL: 0 },
     Display: { Color: chain },
     Geom: chain,
     Input: { Keyboard: { KeyCodes: new Proxy({}, { get: () => 0 }) } },
+    Renderer: {
+        WebGL: {
+            Pipelines: {
+                Events: { BEFORE_FLUSH: 'pipelinebeforeflush', AFTER_FLUSH: 'pipelineafterflush' },
+            },
+        },
+    },
     Scale: {
         RESIZE: 'RESIZE', FIT: 'FIT', EXPAND: 'EXPAND', CENTER_BOTH: 'CENTER_BOTH',
         Events: { RESIZE: 'resize' },

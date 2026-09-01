@@ -9,6 +9,7 @@ import {
 import { insideHealZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
+import { paintHealthBar, HEALTH_BAR_OFFSET_Y } from '../utils/HealthBar.js';
 import {
     attackShapes, attackShapeHitsEllipse, attackSideFor, drawAttackShape,
     ellipseContainsPoint, rectangleOverlapsEllipse, circleOverlapsEllipse,
@@ -125,6 +126,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
          *  `delayedCall` do dano e do respawn não cortarem uma a outra. */
         this._dashInvulnUntil = 0;
 
+        this._initDrawCache();
+
         // Inicializa o emissor de partículas da aura (se ainda não existir a textura)
         this._createAuraEmitter();
 
@@ -136,6 +139,20 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     /**
      * Cria (ou recicla) a textura da partícula da aura e adiciona o emissor.
      */
+    /**
+     * Últimos valores DESENHADOS. Existem para o `commonUpdate` poder pular
+     * trabalho que não mudou: um `Graphics` guarda o que foi desenhado, e
+     * refazer o mesmo desenho a cada quadro não muda um pixel.
+     */
+    _initDrawCache() {
+        this._vidaDesenhada = -1;
+        this._auraAplicada = -1;
+        this._debugDesenhado = false;
+        this._cargaDesenhada = false;
+        this._visuaisVisiveis = null;
+    }
+
+
     _createAuraEmitter() {
         const scene = this.scene;
         const textureKey = 'aura-particle';
@@ -178,7 +195,10 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             this._auraEmitterActive = false;
         }
 
-        if (this.aura > 0) {
+        // Cor e cadência são propriedades do emissor: uma vez escritas, valem
+        // até mudarem. A aura muda por abate e por morte, não por quadro.
+        if (this.aura > 0 && this.aura !== this._auraAplicada) {
+            this._auraAplicada = this.aura;
             let auraColor = AURA_THRESHOLDS[0].color;
             for (let i = AURA_THRESHOLDS.length - 1; i >= 0; i--) {
                 if (this.aura >= AURA_THRESHOLDS[i].minAura) {
@@ -564,20 +584,19 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         );
     }
 
+    /**
+     * A barra ANDA junto com o personagem, mas só é REDESENHADA quando a vida
+     * muda — ver `utils/HealthBar.js`. Antes eram uma limpeza e dois
+     * retângulos por personagem por quadro, refazendo sempre o mesmo desenho.
+     */
     createHealthBar() {
-        const barWidth = 40;
-        const barHeight = 5;
-        const x = this.x - barWidth / 2;
-        const y = this.y - 70;
-
-        this.healthBar.clear();
-
-        this.healthBar.fillStyle(0x000000, 0.7);
-        this.healthBar.fillRect(x, y, barWidth, barHeight);
+        this.healthBar.setPosition(this.x, this.y + HEALTH_BAR_OFFSET_Y);
 
         const healthPercent = Math.max(0, this.currentHealth / this.maxHealth);
-        this.healthBar.fillStyle(0xff0000, 1);
-        this.healthBar.fillRect(x, y, barWidth * healthPercent, barHeight);
+        if (healthPercent === this._vidaDesenhada) return;
+
+        this._vidaDesenhada = healthPercent;
+        paintHealthBar(this.healthBar, healthPercent);
     }
 
     updateHealthBar() {
@@ -596,8 +615,18 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
      * precisa declarar a flag para o jogo funcionar.
      */
     drawDebugHitbox() {
+        if (!this.scene.showHitboxes) {
+            // Desligado é o caso normal, e aí não há o que limpar depois do
+            // primeiro quadro. A tecla H liga e desliga.
+            if (this._debugDesenhado) {
+                this.debugGraphics.clear();
+                this._debugDesenhado = false;
+            }
+            return;
+        }
+
         this.debugGraphics.clear();
-        if (!this.scene.showHitboxes) return;
+        this._debugDesenhado = true;
 
         const center = this.getEllipseCenter();
         const rx = this.collisionRx;
@@ -642,8 +671,16 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
 
     /** Indicador de carga; o desenho vive em `ChargeGlow.js`, usado nos dois modos. */
     drawChargeGlow() {
+        if (!this._isCharging) {
+            if (this._cargaDesenhada) {
+                this.chargeGlowGraphics.clear();
+                this._cargaDesenhada = false;
+            }
+            return;
+        }
+
         this.chargeGlowGraphics.clear();
-        if (!this._isCharging) return;
+        this._cargaDesenhada = true;
 
         paintChargeGlow(
             this.chargeGlowGraphics,
@@ -660,6 +697,9 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
      * o último desenho e continuaria visível mesmo com o sprite invisível.
      */
     setVisualsVisible(visible) {
+        if (visible === this._visuaisVisiveis) return;
+        this._visuaisVisiveis = visible;
+
         this.healthBar.setVisible(visible);
         this.debugGraphics.setVisible(visible);
         this.attackGraphics.setVisible(visible);

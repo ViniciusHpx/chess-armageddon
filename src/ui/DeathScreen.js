@@ -3,6 +3,7 @@
  * Fica fixo na câmera (setScrollFactor(0)) e acima de toda a UI de input.
  */
 import { viewportOf } from '../utils/Viewport.js';
+import { TEXT_RESOLUTION } from '../utils/RenderPolicy.js';
 
 /** Deslocamentos a partir do centro da tela. */
 const TITULO_Y = -80;
@@ -28,7 +29,8 @@ export default class DeathScreen {
             fontSize: '64px',
             color: '#ff3b3b',
             stroke: '#000000',
-            strokeThickness: 8
+            strokeThickness: 8,
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         // Botão de renascer (retângulo + label)
@@ -39,7 +41,8 @@ export default class DeathScreen {
         this.buttonLabel = scene.add.text(0, 0, 'RENASCER', {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '32px',
-            color: '#ffffff'
+            color: '#ffffff',
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         this.elements = [this.overlay, this.title, this.button, this.buttonLabel];

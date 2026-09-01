@@ -44,7 +44,7 @@ function copiarComoEsm(de, para) {
 }
 
 /** Módulos de teste, na ordem em que rodam. */
-const SUITES = ['lifecycle.mjs', 'viewport.mjs', 'layout.mjs'];
+const SUITES = ['lifecycle.mjs', 'viewport.mjs', 'layout.mjs', 'render.mjs', 'gpu.mjs', 'cpu.mjs'];
 
 try {
     fs.mkdirSync(path.join(destino, 'src'), { recursive: true });

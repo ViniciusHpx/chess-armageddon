@@ -4,6 +4,8 @@ import {
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
+import { TEXT_RESOLUTION } from '../utils/RenderPolicy.js';
+import { paintHealthBar, HEALTH_BAR_OFFSET_Y } from '../utils/HealthBar.js';
 import { attackShapes, drawAttackShape } from '../utils/AttackGeometry.js';
 
 /**
@@ -79,7 +81,10 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
             fontSize: '14px',
             color: isLocal ? '#ffff00' : '#ffffff',
             stroke: '#000000',
-            strokeThickness: 3
+            strokeThickness: 3,
+            // Nome no mundo, mas é texto e sofre a mesma ampliação do buffer.
+            // São no máximo 10 rótulos curtos. Ver `RenderPolicy.js`.
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         // Posição desenhada. Para o jogador local vem da previsão; para os
@@ -101,6 +106,8 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
          * ligada. Ver `checkDashFx`.
          */
         this._wasDashing = false;
+
+        this._initDrawCache();
 
         this.applyRank();
     }
@@ -248,6 +255,23 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
      * `dashing`. A direção sai das duas últimas amostras — é o movimento que
      * realmente aconteceu, e num dash ele domina qualquer outra coisa.
      */
+    /**
+     * Últimos valores DESENHADOS. Existem para o `commonUpdate` poder pular
+     * trabalho que não mudou: um `Graphics` guarda o que foi desenhado, e
+     * refazer o mesmo desenho a cada quadro não muda um pixel.
+     *
+     * Mesma forma do `PlayerBase._initDrawCache` — as duas hierarquias
+     * desenham a mesma coisa e agora pulam o mesmo trabalho.
+     */
+    _initDrawCache() {
+        this._vidaDesenhada = -1;
+        this._auraAplicada = -1;
+        this._debugDesenhado = false;
+        this._cargaDesenhada = false;
+        this._ataqueDesenhado = false;
+        this._visuaisVisiveis = null;
+    }
+
     checkDashFx() {
         const dashing = this.actorState.dashing;
 
@@ -290,33 +314,52 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         this.drawChargeGlow();
         this.drawNameLabel();
 
-        this.attackGraphics.clear();
-        if (this.actorState.attacking) this.drawAttackVisual();
+        // O golpe some no quadro em que acaba, e não antes: limpar sempre
+        // custaria uma limpeza por ator por quadro para um `Graphics` que
+        // passa quase todo o tempo vazio.
+        if (this.actorState.attacking) {
+            this.attackGraphics.clear();
+            this._ataqueDesenhado = true;
+            this.drawAttackVisual();
+        } else if (this._ataqueDesenhado) {
+            this.attackGraphics.clear();
+            this._ataqueDesenhado = false;
+        }
     }
 
     drawNameLabel() {
         this.nameLabel.setPosition(this.x, this.y - 85);
     }
 
+    /**
+     * A barra ANDA junto com o personagem, mas só é REDESENHADA quando a vida
+     * muda — ver `utils/HealthBar.js`. Antes eram uma limpeza e dois
+     * retângulos por ator por quadro, refazendo sempre o mesmo desenho.
+     */
     drawHealthBar() {
-        const barWidth = 40;
-        const barHeight = 5;
-        const x = this.x - barWidth / 2;
-        const y = this.y - 70;
-
-        this.healthBar.clear();
-        this.healthBar.fillStyle(0x000000, 0.7);
-        this.healthBar.fillRect(x, y, barWidth, barHeight);
+        this.healthBar.setPosition(this.x, this.y + HEALTH_BAR_OFFSET_Y);
 
         const maxHp = this.actorState.maxHp || 1;
         const percent = Math.max(0, this.actorState.hp / maxHp);
-        this.healthBar.fillStyle(0xff0000, 1);
-        this.healthBar.fillRect(x, y, barWidth * percent, barHeight);
+        if (percent === this._vidaDesenhada) return;
+
+        this._vidaDesenhada = percent;
+        paintHealthBar(this.healthBar, percent);
     }
 
     drawDebugHitbox() {
+        if (!this.scene.showHitboxes) {
+            // Desligado é o caso normal, e aí não há o que limpar depois do
+            // primeiro quadro. A tecla H liga e desliga.
+            if (this._debugDesenhado) {
+                this.debugGraphics.clear();
+                this._debugDesenhado = false;
+            }
+            return;
+        }
+
         this.debugGraphics.clear();
-        if (!this.scene.showHitboxes) return;
+        this._debugDesenhado = true;
 
         const center = this.getEllipseCenter();
         const rx = this.collisionRx;
@@ -358,7 +401,10 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
             this.auraEmitter.stop();
             this._auraEmitterActive = false;
         }
-        if (aura <= 0) return;
+        // Cor e cadência são propriedades do emissor: uma vez escritas, valem
+        // até mudarem. A aura muda por abate e por morte, não por quadro.
+        if (aura <= 0 || aura === this._auraAplicada) return;
+        this._auraAplicada = aura;
 
         let auraColor = AURA_THRESHOLDS[0].color;
         for (let i = AURA_THRESHOLDS.length - 1; i >= 0; i--) {
@@ -386,10 +432,18 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
      * `chargeRatio` do estado para os outros.
      */
     drawChargeGlow() {
-        this.chargeGlowGraphics.clear();
-
         const charging = this.isLocal ? this.localCharging : this.actorState.charging;
-        if (!charging) return;
+
+        if (!charging) {
+            if (this._cargaDesenhada) {
+                this.chargeGlowGraphics.clear();
+                this._cargaDesenhada = false;
+            }
+            return;
+        }
+
+        this.chargeGlowGraphics.clear();
+        this._cargaDesenhada = true;
 
         const doEstado = this.actorState.chargeRatio;
         const ratio = this.isLocal
@@ -446,6 +500,10 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
      * sprite sem isto e as barras continuam flutuando na tela.
      */
     setVisualsVisible(visible) {
+        // Chamado a cada quadro pelo `sync`, quase sempre com o mesmo valor.
+        if (visible === this._visuaisVisiveis) return;
+        this._visuaisVisiveis = visible;
+
         this.healthBar.setVisible(visible);
         this.debugGraphics.setVisible(visible);
         this.attackGraphics.setVisible(visible);

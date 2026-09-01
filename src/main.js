@@ -6,6 +6,7 @@ import {
     storedPlayerName, storePlayerName, setJoinChoice, resolveJoinChoice, resolveEndpoint
 } from './net/netconfig.js';
 import { logicalSize, installViewportScaling } from './utils/Viewport.js';
+import { installRenderPolicy } from './utils/RenderPolicy.js';
 
 /**
  * Dois modos, escolhidos pela URL:
@@ -65,6 +66,31 @@ const config = {
     // O banner do Phaser no console custa pouco, mas não serve para nada em
     // produção — e no celular o console é o do WebView.
     banner: false,
+
+    /**
+     * Pipelines de Pre FX: não criar.
+     *
+     * O projeto não usa efeito nenhum — nem `preFX`, nem `postFX`, nem
+     * `setPostPipeline` —, mas o Phaser monta a piscina inteira no boot de
+     * qualquer forma: três render targets do tamanho do canvas MAIS uma escada
+     * de alvos quadrados de 32 em 32 px até a menor dimensão dele
+     * (`phaser.js:175660-175681`). Com as 720 linhas da Fase D isso dá 22
+     * degraus, três alvos cada — cerca de 44 MiB de VRAM parada, além dos
+     * ~11 MiB dos três de tela cheia.
+     *
+     * Nada do que aparece na tela muda: os pipelines de fato usados continuam
+     * sendo o `MultiPipeline` (ou o `MobilePipeline` no celular) e o
+     * `UtilityPipeline`, registrados fora deste bloco (`phaser.js:175344`).
+     * Voltar atrás é apagar esta linha.
+     *
+     * Fica na RAIZ da configuração, e não dentro de `render`: o Phaser a lê com
+     * `GetValue(config, 'disablePreFX', false)` (`phaser.js:16145`), sem
+     * consultar o sub-objeto `render`. Dentro dele seria ignorada em silêncio.
+     *
+     * Ver `utils/RenderPolicy.js` para a conta.
+     */
+    disablePreFX: true,
+
     scene: offline ? [Start, Arena] : [Arena, Start],
     render: {
         /**
@@ -130,3 +156,7 @@ const game = new Phaser.Game(config);
 // tamanho lógico. Quem reposiciona o HUD são os próprios componentes, cada um
 // inscrito no `Viewport` da sua cena.
 installViewportScaling(game);
+
+// Vigia o tamanho do buffer de desenho e publica `renderReport()` no console.
+// Não configura nada: o buffer já sai correto do tamanho lógico acima.
+installRenderPolicy(game);

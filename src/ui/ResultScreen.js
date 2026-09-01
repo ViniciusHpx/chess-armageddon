@@ -1,4 +1,5 @@
 import { viewportOf } from '../utils/Viewport.js';
+import { TEXT_RESOLUTION } from '../utils/RenderPolicy.js';
 
 /**
  * Tela de fim de partida: arte de VITÓRIA ou DERROTA, o placar final e as duas
@@ -59,7 +60,8 @@ export default class ResultScreen {
             fontSize: '84px',
             color: '#ffffff',
             stroke: '#000000',
-            strokeThickness: 10
+            strokeThickness: 10,
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         this.placar = scene.add.text(0, 0, '', {
@@ -67,7 +69,8 @@ export default class ResultScreen {
             fontSize: '30px',
             color: '#ffffff',
             stroke: '#000000',
-            strokeThickness: 6
+            strokeThickness: 6,
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         this.rematch = this.criarBotao(0, 0, 'REVANCHE');
@@ -78,7 +81,8 @@ export default class ResultScreen {
         this.status = scene.add.text(0, 0, '', {
             fontFamily: 'Arial, sans-serif',
             fontSize: '18px',
-            color: '#cfcfcf'
+            color: '#cfcfcf',
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         this.elements = [
@@ -136,7 +140,8 @@ export default class ResultScreen {
         const label = this.scene.add.text(x, y, texto, {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '28px',
-            color: '#ffffff'
+            color: '#ffffff',
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         fundo.on('pointerover', () => fundo.setFillStyle(0x3a3a3a, 0.95));

@@ -1,5 +1,6 @@
 import { DEBUG_BUTTON_ENABLED } from '../constants/Mobile.js';
 import { viewportOf } from './Viewport.js';
+import { TEXT_RESOLUTION } from './RenderPolicy.js';
 
 /**
  * Onde cada controle fica, medido a partir do CANTO DE BAIXO da área útil da
@@ -448,6 +449,7 @@ export default class InputManager {
             fontSize: '11px',
             fontStyle: 'bold',
             color: '#ffffff',
+            resolution: TEXT_RESOLUTION,
         })
             .setOrigin(0.5)
             .setScrollFactor(0)

@@ -1,4 +1,5 @@
 import { viewportOf } from '../utils/Viewport.js';
+import { TEXT_RESOLUTION } from '../utils/RenderPolicy.js';
 
 /**
  * Placar de abates e mortes, exibido enquanto o TAB está pressionado.
@@ -46,7 +47,8 @@ export default class Scoreboard {
             fontFamily: 'Consolas, "Courier New", monospace',
             fontSize: '18px',
             color: '#ffffff',
-            align: 'left'
+            align: 'left',
+            resolution: TEXT_RESOLUTION
         }).setOrigin(0.5);
 
         this.elements = [this.panel, this.text];
