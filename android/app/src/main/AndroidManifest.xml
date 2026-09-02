@@ -10,6 +10,7 @@
         android:theme="@style/AppTheme">
 
         <activity
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
@@ -23,6 +24,17 @@
             </intent-filter>
 
         </activity>
+
+        <!--
+            Android 16 (targetSdk 36) IGNORA a orientacao declarada em telas com
+            largura minima >= 600dp (tablet, dobravel aberto): o app e' esticado
+            para o tamanho da janela. Esta propriedade e' o opt-out documentado,
+            e vale ate' o targetSdk 37 - a partir dali o jogo precisa aguentar
+            retrato em tela grande. Em celular nao muda nada.
+        -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -1,26 +1,110 @@
 import { DEBUG_BUTTON_ENABLED } from '../constants/Mobile.js';
+import { ATTACK_AIM_DEADZONE } from '../constants/Hierarchy.js';
 import { viewportOf } from './Viewport.js';
 import { TEXT_RESOLUTION } from './RenderPolicy.js';
 
 /**
- * Onde cada controle fica, medido a partir do CANTO DE BAIXO da área útil da
- * tela — nunca de um 1280 × 720 cravado.
+ * TAMANHO E POSIÇÃO DOS CONTROLES DE TOQUE, num lugar só.
  *
- * Os números são os mesmos de antes (o joystick sempre esteve a 120 px do
- * canto de baixo à esquerda, o ataque a 100/120 do de baixo à direita), então
- * na tela de referência o layout não mudou um pixel. O que mudou é de onde a
- * conta parte: numa tela 20:9 o canto direito está em 1600, não em 1280, e os
- * botões acompanham sozinhos.
+ * Tudo aqui está em unidades LÓGICAS do jogo — a altura é sempre 720 e a
+ * largura sai da proporção da tela (ver `Viewport.js`). Não há pixel de
+ * aparelho nenhum nestes números: quem converte é o `Scale.FIT`, então um
+ * controle ocupa a MESMA fração da tela num 16:9 e num 20:9, e a âncora do
+ * lado direito acompanha a largura sozinha.
+ *
+ * A ordem das três seções importa, e é ela que evita número solto:
+ *
+ *   1. TAMANHOS — o raio de cada controle;
+ *   2. MARGENS — a folga que se quer VER entre o controle e a borda, e entre
+ *      um controle e o vizinho;
+ *   3. ÂNCORAS — derivadas: cada uma é `margem + raio`, a distância do CENTRO
+ *      do controle até a borda útil da tela.
+ *
+ * Como a âncora é derivada, mexer num raio move o controle sozinho e a folga
+ * continua sendo exatamente a que está escrita aqui. Antes as duas coisas eram
+ * números independentes, e crescer um botão o empurrava contra a borda em
+ * silêncio.
  */
-const JOYSTICK_ANCHOR = { x: 120, y: 120 };
-const JOYSTICK_BASE_RADIUS = 60;
-const JOYSTICK_THUMB_RADIUS = 30;
 
-const ATTACK_ANCHOR = { x: 100, y: 120 };
-const ATTACK_RADIUS = 50;
+/* --------------------------------- Tamanhos ------------------------------ */
 
-const DASH_ANCHOR = { x: 185, y: 68 };
-const DEBUG_ANCHOR = { x: 268, y: 68 };
+const JOYSTICK_BASE_RADIUS = 72;
+const JOYSTICK_THUMB_RADIUS = JOYSTICK_BASE_RADIUS / 2;
+
+const ATTACK_RADIUS = 60;
+
+/**
+ * Miolo arrastável do controle de ataque: metade da base, a mesma proporção do
+ * joystick de movimento.
+ *
+ * O que sobra (`raio - miolo`) é o CURSO do controle — o quanto o miolo anda
+ * até bater no limite, e portanto o quanto o dedo percorre para escolher a
+ * direção. São 30 px lógicos contra os 24 de antes: mira mais folgada sem
+ * mudar nada na lógica, porque a força é normalizada pelo curso.
+ */
+const ATTACK_STICK_THUMB = ATTACK_RADIUS / 2;
+
+const DASH_BTN_RADIUS = 40;
+const DEBUG_BTN_RADIUS = 35;
+
+/* --------------------------------- Margens ------------------------------- */
+
+/**
+ * Folga entre a BORDA do controle e a borda útil da tela — que já é a tela
+ * menos notch e barra de gestos (ver `Viewport.bottomLeft`).
+ */
+const CONTROL_EDGE_MARGIN = 72;
+
+/**
+ * Folga do lado DIREITO, maior de propósito.
+ *
+ * É onde fica o controle de ataque, e ali o dedo não só encosta: ele ARRASTA
+ * para escolher a direção, e o arraste sai do centro para qualquer lado. Com a
+ * folga de 50 px de antes, mirar para a direita esbarrava na borda da tela (e
+ * na moldura do aparelho) antes de o curso terminar. Dobrá-la é a correção;
+ * dash e DEBUG herdam o afastamento por serem posicionados a partir daqui.
+ */
+const CONTROL_EDGE_MARGIN_RIGHT = 100;
+
+/** Folga MÍNIMA entre as bordas de dois controles vizinhos. */
+const CONTROL_GAP = 20;
+
+/**
+ * Folga do rodapé para a fileira de botões (dash e DEBUG).
+ *
+ * Menor que a dos analógicos porque eles são de TOQUE, não de arraste: não
+ * precisam de espaço em volta, e mais rentes ao rodapé sobem menos sobre a
+ * área jogável.
+ */
+const ACTION_ROW_MARGIN = 40;
+
+/* -------------------------- Âncoras (derivadas) -------------------------- */
+
+const JOYSTICK_ANCHOR = {
+    x: CONTROL_EDGE_MARGIN + JOYSTICK_BASE_RADIUS,
+    y: CONTROL_EDGE_MARGIN + JOYSTICK_BASE_RADIUS
+};
+
+const ATTACK_ANCHOR = {
+    x: CONTROL_EDGE_MARGIN_RIGHT + ATTACK_RADIUS,
+    y: CONTROL_EDGE_MARGIN + ATTACK_RADIUS
+};
+
+/**
+ * Dash e DEBUG ficam à ESQUERDA do ataque e numa fileira mais baixa. O `x` de
+ * cada um sai da borda do vizinho da direita mais o `CONTROL_GAP`, então a
+ * folga é garantida por construção — e, como ainda estão mais embaixo, a
+ * distância real entre centros é MAIOR que essa conta, nunca menor.
+ */
+const DASH_ANCHOR = {
+    x: ATTACK_ANCHOR.x + ATTACK_RADIUS + CONTROL_GAP + DASH_BTN_RADIUS,
+    y: ACTION_ROW_MARGIN + DASH_BTN_RADIUS
+};
+
+const DEBUG_ANCHOR = {
+    x: DASH_ANCHOR.x + DASH_BTN_RADIUS + CONTROL_GAP + DEBUG_BTN_RADIUS,
+    y: ACTION_ROW_MARGIN + DEBUG_BTN_RADIUS
+};
 
 /** Botão de ataque: vermelho cheio, opaco o bastante para ler no mapa claro. */
 const ATTACK_BTN_COLOR = 0xd91b1b;
@@ -28,6 +112,22 @@ const ATTACK_BTN_ALPHA = 0.75;
 const ATTACK_BTN_STROKE = 0x6e0000;
 
 const SWORD_TEXTURE = 'attack-sword-icon';
+
+/**
+ * Lado das texturas de ícone desenhadas por código (espada e dash): as duas
+ * são geradas em 96 × 96 — ver `createSwordTexture` e `createDashTexture`.
+ */
+const ICON_TEXTURE_SIZE = 96;
+
+/**
+ * Escala dos ícones, expressa em RAIOS do controle que os carrega (a espada
+ * mede 1,5 raio; as setas do dash, 1,75). Escrita assim, ela ACOMPANHA o
+ * tamanho do botão em vez de ser um número fixo que envelhece a cada ajuste —
+ * e reproduz exatamente as proporções de antes (0,78 num raio 50 e 0,62 num
+ * raio 34).
+ */
+const SWORD_ICON_SCALE = (ATTACK_RADIUS * 1.5) / ICON_TEXTURE_SIZE;
+const DASH_ICON_SCALE = (DASH_BTN_RADIUS * 1.75) / ICON_TEXTURE_SIZE;
 
 /**
  * Profundidade dos controles na tela.
@@ -46,13 +146,12 @@ const CONTROLS_DEPTH = 8000;
 
 /**
  * Botão de dash: menor que o de ataque e logo abaixo/à esquerda dele, dentro
- * do arco natural do polegar direito, longe o bastante para não haver toque
- * errado (a distância entre centros é maior que a soma dos raios).
+ * do arco natural do polegar direito. Quem garante que não há toque errado é o
+ * `CONTROL_GAP` embutido no `DASH_ANCHOR`, lá em cima.
  */
 const DASH_BTN_COLOR = 0x2f7fd6;
 const DASH_BTN_ALPHA = 0.7;
 const DASH_BTN_STROKE = 0x0d3a68;
-const DASH_BTN_RADIUS = 34;
 
 /** Opacidade do botão enquanto o dash está em recarga. */
 const DASH_BTN_DISABLED_ALPHA = 0.3;
@@ -71,7 +170,9 @@ const DASH_TEXTURE = 'dash-icon';
 const DEBUG_BTN_COLOR = 0x7a3fb0;
 const DEBUG_BTN_ALPHA = 0.7;
 const DEBUG_BTN_STROKE = 0x2c1046;
-const DEBUG_BTN_RADIUS = 30;
+
+/** Rótulo do botão: ~0,37 raio, a mesma proporção de antes (11 px num raio 30). */
+const DEBUG_LABEL_SIZE = Math.round(DEBUG_BTN_RADIUS * 0.37);
 
 /**
  * Passo mínimo do indicador de recarga para valer um redesenho.
@@ -81,15 +182,6 @@ const DEBUG_BTN_RADIUS = 30;
  * cooldown, o suficiente para o movimento parecer contínuo.
  */
 const DASH_CD_STEP = 0.02;
-
-/**
- * Raio do miolo arrastável do controle de ataque.
- *
- * O controle ocupa o mesmo lugar e o mesmo tamanho do botão que ele substitui
- * (raio 50), então a distância até o botão de dash continua sendo maior que a
- * soma dos raios — não há como acertar os dois com o mesmo toque.
- */
-const ATTACK_STICK_THUMB = 26;
 
 /**
  * Um controle virtual arrastável: base fixa + miolo que segue o dedo.
@@ -224,6 +316,10 @@ export default class InputManager {
 
         this._prevTouchAttackDown = false;   // estado anterior para detecção de borda
 
+        // O controle de ataque já foi ARRASTADO até uma direção válida no
+        // toque que está em curso? Ver `update()`.
+        this._attackAimArmed = false;
+
         this._lastSpaceDown = false;         // estado anterior do espaço
 
         // Estado do dash. Só tem borda de descida: dash é um toque, não um
@@ -305,10 +401,12 @@ export default class InputManager {
     /**
      * Controle de ATAQUE: o botão vermelho virou um joystick.
      *
-     * Toca e ataca (como antes), arrasta e escolhe a direção, segura e o golpe
-     * se repete — o ritmo é do `ATTACK_INTERVAL`, no servidor. Fica no mesmo
-     * lugar, com o mesmo tamanho e a mesma cor do botão que substitui, então
-     * quem só toca nem percebe a diferença.
+     * Toca e MIRA, arrasta e escolhe a direção, e é o arraste que dispara o
+     * golpe; segurando, ele se repete — o ritmo é do `ATTACK_INTERVAL`, no
+     * servidor. Mantém a cor e o formato do botão que substituiu, agora maior
+     * e mais afastado da borda direita — ver `CONTROL_EDGE_MARGIN_RIGHT`.
+     *
+     * Tocar sem arrastar NÃO ataca: ver o estado de mira em `update()`.
      *
      * O ícone de espada anda com o miolo: é o retorno visual da direção
      * escolhida, sem nada novo desenhado por quadro.
@@ -339,7 +437,7 @@ export default class InputManager {
             .setScrollFactor(0)
             .setDepth(CONTROLS_DEPTH + 2)
             .setAngle(-45)
-            .setScale(0.78)
+            .setScale(SWORD_ICON_SCALE)
             .setAlpha(0.95);
 
         // O miolo e o ícone andam juntos.
@@ -403,7 +501,7 @@ export default class InputManager {
         this.dashIcon = this.scene.add.image(x, y, DASH_TEXTURE)
             .setScrollFactor(0)
             .setDepth(CONTROLS_DEPTH + 2)
-            .setScale(0.62)
+            .setScale(DASH_ICON_SCALE)
             .setAlpha(0.95);
 
         // Indicador de recarga: uma fatia escura por cima do botão, encolhendo
@@ -433,9 +531,8 @@ export default class InputManager {
         // troca a peça no meio da briga. Ver `constants/Mobile.js`.
         if (!DEBUG_BUTTON_ENABLED) return;
 
-        // Alinhado com o dash e à esquerda dele. A distância entre centros (83)
-        // é maior que a soma dos raios (64), então não há como acertar os dois
-        // com o mesmo toque. Ver `DEBUG_ANCHOR`.
+        // Alinhado com o dash e à esquerda dele, com o `CONTROL_GAP` entre as
+        // bordas — ver `DEBUG_ANCHOR`, que é onde essa folga é imposta.
         const x = 0;
         const y = 0;
 
@@ -446,7 +543,7 @@ export default class InputManager {
         this.debugBtn.setStrokeStyle(3, DEBUG_BTN_STROKE, 0.9);
 
         this.debugLabel = this.scene.add.text(x, y, 'DEBUG', {
-            fontSize: '11px',
+            fontSize: `${DEBUG_LABEL_SIZE}px`,
             fontStyle: 'bold',
             color: '#ffffff',
             resolution: TEXT_RESOLUTION,
@@ -653,9 +750,33 @@ export default class InputManager {
         }
         this._lastSpaceDown = spaceDown;
 
-        // Controle de ataque (toque/mouse). Só a presença do dedo importa aqui;
-        // a direção do arraste sai por `getAttackVector`.
-        const stickDown = this.attackStick.active;
+        // Controle de ataque (toque/mouse).
+        //
+        // Pousar o dedo é MIRAR, não bater. Antes bastava a PRESENÇA do dedo:
+        // o `pointerdown` já subia a borda de aperto e o golpe saía no mesmo
+        // quadro, com o miolo ainda no centro — ou seja, sem direção nenhuma,
+        // e o servidor caía no `flipX`. O jogador só conseguia arrastar
+        // DEPOIS, e o ataque tinha ido para o lado errado.
+        //
+        // Quem ARMA o ataque é o arraste passar de `ATTACK_AIM_DEADZONE`.
+        // Abaixo disso não existe direção definida, e é justamente esse o
+        // limiar que `World.attackDir` (online) e `PlayerBase.attackDir`
+        // (offline) usam para decidir se leem a mira ou o `flipX` — então não
+        // sobra faixa em que o cliente mande atacar e o outro lado responda
+        // "sem mira".
+        //
+        // Armado, continua armado até o dedo SAIR do controle: é o `held` que
+        // sustenta o ataque contínuo, e desarmar ao passar de novo perto do
+        // centro faria o golpe piscar em cima do limiar. Soltar (ou o
+        // `release()` do BLUR e do redimensionamento) zera pelo `active`.
+        const mirando = this.attackStick.active;
+        const temDirecao = mirando && Math.hypot(
+            this.attackStick.force.x, this.attackStick.force.y
+        ) >= ATTACK_AIM_DEADZONE;
+
+        this._attackAimArmed = mirando && (this._attackAimArmed || temDirecao);
+
+        const stickDown = this._attackAimArmed;
 
         if (!this._prevTouchAttackDown && stickDown) {
             this._attackJustPressed = true;

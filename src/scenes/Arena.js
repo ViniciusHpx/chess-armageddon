@@ -741,8 +741,10 @@ export class Arena extends Phaser.Scene {
             Math.abs(ax - this.lastSentAx) > INPUT_EPSILON ||
             Math.abs(ay - this.lastSentAy) > INPUT_EPSILON;
 
+        let entradaEnviada = false;
         if (desde >= INPUT_SEND_MS || (mudou && desde >= INPUT_MIN_GAP_MS)) {
             this.sendInputPacket(dx, dy, now, ax, ay);
+            entradaEnviada = true;
         }
 
         const attack = this.inputs.getAttackState();
@@ -757,6 +759,15 @@ export class Arena extends Phaser.Scene {
         // da recuperação seria engolido aqui, o servidor nunca saberia do
         // "segurando", e a repetição jamais começaria.
         if (attack.justPressed && localState.alive) {
+            // A mira precisa chegar ANTES do golpe, pelo mesmo motivo do dash:
+            // quem escolhe a direção é o servidor, e ele lê a ÚLTIMA entrada
+            // recebida. O aperto acontece no quadro em que o arraste passa da
+            // zona morta, e o piso de `INPUT_MIN_GAP_MS` pode ter segurado
+            // justamente esse pacote — aí o golpe sairia com a mira anterior,
+            // ainda dentro da zona morta, ou seja, sem direção. Como o
+            // transporte preserva a ordem, o `i` chega primeiro.
+            if (!entradaEnviada) this.sendInputPacket(dx, dy, now, ax, ay);
+
             this.room.send('a', 1);
 
             // A carga local, essa sim, respeita o gate: acender o indicador
