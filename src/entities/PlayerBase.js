@@ -4,7 +4,7 @@ import {
     DASH_COOLDOWN_MS, DASH_DISTANCE, DASH_INVULN_MS, DASH_SPEED, DASH_TIMEOUT_MS,
     RANKS, AURA_KILL_VALUES, AURA_THRESHOLDS, skinKey, canPhaseDash,
     KNOCKBACK_DECAY_MS, KNOCKBACK_MIN_SPEED, knockbackSpeed,
-    ATTACK_AIM_DEADZONE, ATTACK_INTERVAL, attackDirAngle, attackDirIndex
+    ATTACK_INTERVAL, attackAimAngle
 } from '../constants/Hierarchy.js';
 import { insideHealZone, BASE_HEAL_PER_SECOND } from '../constants/Scenario.js';
 import { playDashFx } from '../utils/DashFx.js';
@@ -84,17 +84,17 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
          * jogador andar para um lado e bater para outro.
          *
          * Quem escreve é a entidade que tem entrada de jogador
-         * (`HumanPlayer.update`). Bots nunca mexem nisso, então para eles o
-         * golpe continua saindo pelo `flipX`, como sempre saiu.
+         * (`HumanPlayer.update`) e o BOT (`AIPlayer`, mirando no alvo antes de
+         * bater) — os dois pelo mesmo campo e pela mesma `attackAimAngle`.
          */
         this._aimDx = 0;
         this._aimDy = 0;
         /**
-         * Direção do golpe em curso, índice em `ATTACK_DIR_COUNT` (0..7).
+         * Direção do golpe em curso, em RADIANOS e contínua em 360°.
          * Congelada em `performAttack`: mudá-la no meio do golpe faria o dano
          * sair de onde não apareceu.
          */
-        this._atkDir = 0;
+        this._atkAngle = 0;
 
         // Máquina de carga do ataque, compartilhada por humano e bot.
         this._isCharging = false;
@@ -764,30 +764,59 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Direção do golpe que está saindo agora.
+     * Direção do golpe que está saindo agora, em RADIANOS e sem quantização.
      *
      * A mira manda, se houver; sem mira (zona morta) o golpe sai para o lado
      * que a peça olha, que é o comportamento de sempre. Espelha
-     * `World.attackDir` do servidor, e é esse fallback que mantém teclado e
-     * BOTS idênticos ao que eram — nenhum dos dois escreve em `_aimDx/_aimDy`.
+     * `World.attackAngle` do servidor, e é esse fallback que mantém o teclado
+     * idêntico ao que era.
      */
-    attackDir() {
-        if (Math.hypot(this._aimDx, this._aimDy) >= ATTACK_AIM_DEADZONE) {
-            return attackDirIndex(this._aimDx, this._aimDy);
-        }
-        return attackDirIndex(this.flipX ? -1 : 1, 0);
+    attackAngle() {
+        return attackAimAngle(this._aimDx, this._aimDy, this.flipX);
     }
 
+    /**
+     * Mira em `target`: o vetor unitário do centro da elipse até a dele.
+     *
+     * Espelha `World.aimAt`. Escreve no MESMO `_aimDx/_aimDy` da entrada do
+     * jogador, então o golpe do bot passa por `attackAngle` como qualquer
+     * outro e também sai em qualquer direção dos 360°.
+     */
+    aimAt(target) {
+        const from = this.getEllipseCenter();
+        const to = target.getEllipseCenter();
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) return;
+        this._aimDx = dx / len;
+        this._aimDy = dy / len;
+    }
+
+    /**
+     * Começa um golpe. Devolve `true` se ele saiu mesmo — é essa resposta que
+     * diz ao controle de ataque que a mira foi USADA (ver
+     * `InputManager.consumeAttackAim`); golpe recusado por recuperação não
+     * consome mira nenhuma.
+     */
     performAttack(enemyGroup) {
-        if (this._isAttacking) return;
-        if (this.scene.time.now < this._attackReadyAt) return;
+        if (this._isAttacking) return false;
+        if (this.scene.time.now < this._attackReadyAt) return false;
         this._isAttacking = true;
         this._attackHitEnemies.clear();
         this._attackEnemyGroup = enemyGroup;
         // Direção CONGELADA aqui, como no servidor: o desenho e o dano do golpe
         // saem os dois dela, e recalculá-la a cada quadro faria a área girar
         // debaixo do golpe já em curso.
-        this._atkDir = this.attackDir();
+        this._atkAngle = this.attackAngle();
+        // MIRA CONSUMIDA. Espelha o `beginAttack` do servidor: a direção que
+        // acabou de virar golpe deixa de existir, e a próxima só aparece quando
+        // alguém definir uma nova — o jogador recentrando e arrastando o
+        // controle outra vez, o bot decidindo de novo em `aimAt`. Sem isto o
+        // vetor antigo continuaria valendo e bastaria o cooldown vencer para o
+        // mesmo golpe sair sozinho.
+        this._aimDx = 0;
+        this._aimDy = 0;
         // Quando este golpe vai acertar. Serve de chave para a esquiva dos bots
         // (`AIPlayer.tryDodge`), que precisa saber se ainda dá tempo de reagir.
         // O atraso cresce com a carga: o toque rápido sai antes, o golpe cheio
@@ -807,6 +836,8 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             if (this.active) this.executeAttackHit(enemyGroup);
             this.finishAttack();
         });
+
+        return true;
     }
 
     /**
@@ -820,7 +851,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
             chargeAreaMult(this._chargePower),
             center.x, center.y,
             this.collisionRx, this.collisionRy,
-            attackDirAngle(this._atkDir),
+            this._atkAngle,
             this.attackSide(enemyGroup)
         );
     }
@@ -849,7 +880,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
         }
         if (!nearest) return 1;
 
-        return attackSideFor(this._atkDir, this.x, this.y, nearest.x, nearest.y);
+        return attackSideFor(this._atkAngle, this.x, this.y, nearest.x, nearest.y);
     }
 
     drawAttackVisual(enemyGroup) {
@@ -929,16 +960,16 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
      * @param {Phaser.GameObjects.Group} enemyGroup Alvos do golpe.
      */
     releaseCharge(enemyGroup) {
-        if (!this._isCharging) return;
+        if (!this._isCharging) return false;
 
         const elapsed = this.scene.time.now - this._chargeStartTime;
         const power = chargePower(elapsed, this._currentRank.chargeTime);
         this.cancelCharge();
 
-        if (this._isAttacking) return;
+        if (this._isAttacking) return false;
 
         this._chargePower = power;
-        this.performAttack(enemyGroup);
+        return this.performAttack(enemyGroup);
     }
 
     /**
@@ -954,7 +985,7 @@ export default class PlayerBase extends Phaser.Physics.Arcade.Sprite {
      */
     attackLight(enemyGroup) {
         this.startCharging();
-        this.releaseCharge(enemyGroup);
+        return this.releaseCharge(enemyGroup);
     }
 
     /** Abandona a carga sem golpe nenhum. */

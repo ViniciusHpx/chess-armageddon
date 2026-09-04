@@ -1,6 +1,5 @@
 import {
-    RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, chargeAreaMult, skinKey,
-    attackDirAngle
+    RANKS, RANK_ORDER, TEAM_ORDER, AURA_THRESHOLDS, chargeAreaMult, skinKey
 } from '../constants/Hierarchy.js';
 import { playDashFx } from '../utils/DashFx.js';
 import { paintChargeGlow } from '../utils/ChargeGlow.js';
@@ -468,7 +467,7 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
      * à mão.
      *
      * Tudo o que ela precisa vem PRONTO do estado, nada é recalculado aqui:
-     * a potência (`atkPower`), a direção (`atkDir`) e o lado da perna do L
+     * a potência (`atkPower`), a direção (`atkAngle`) e o lado da perna do L
      * (`atkSide`) foram decididos e congelados pelo servidor no início do
      * golpe. É o que garante que a área desenhada é a que causou o dano.
      */
@@ -481,7 +480,9 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         const bruto = this.actorState.atkPower;
         const mult = chargeAreaMult(Number.isFinite(bruto) ? bruto / 100 : 0);
 
-        const dir = this.actorState.atkDir;
+        // `atkAngle` já vem em RADIANOS e contínuo: é o mesmo número que o
+        // servidor usou no dano, então não há conversão nenhuma a fazer aqui.
+        const angle = this.actorState.atkAngle;
         const side = this.actorState.atkSide;
 
         const g = this.attackGraphics;
@@ -490,7 +491,7 @@ export default class ArenaActor extends Phaser.GameObjects.Sprite {
         drawAttackShape(g, attackShapes(
             this.rank.attack, mult, center.x, center.y,
             this.collisionRx, this.collisionRy,
-            attackDirAngle(Number.isFinite(dir) ? dir : 0),
+            Number.isFinite(angle) ? angle : 0,
             Number.isFinite(side) ? side : 1
         ));
     }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Fundo da JANELA do app. E' o mesmo #040218 do `body` do index.html e do
+        `android.backgroundColor` do capacitor.config.json: os tres pintam
+        superficies diferentes que o usuario ve como uma so' (janela, WebView e
+        pagina), e qualquer um deles fora de sincronia aparece como um flash de
+        cor errada na abertura ou ao girar o aparelho.
+
+        Sem ele o tema herda o `windowBackground` do Theme.AppCompat.DayNight,
+        que em aparelho no modo claro e' BRANCO.
+    -->
+    <color name="appBackground">#040218</color>
+
+</resources>

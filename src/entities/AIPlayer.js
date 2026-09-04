@@ -1,8 +1,9 @@
 import PlayerBase from './PlayerBase.js';
 import {
-    RANKS, attackHalfBand, attackReach, movementFactor, DAMAGE_NORMAL, DAMAGE_CHARGED,
+    RANKS, attackReach, movementFactor, DAMAGE_NORMAL, DAMAGE_CHARGED,
     attackWindupMs, chargeAreaMult, CHARGED_ATTACK_ENABLED, BOT_DASH_COOLDOWN_MS, BOT_DODGE_CHANCE, BOT_DODGE_RANGE_SLACK, BOT_DODGE_REACTION_MS
 } from '../constants/Hierarchy.js';
+import { ellipseRadiusAt } from '../utils/AttackGeometry.js';
 
 /**
  * Tempo mínimo entre dois golpes do mesmo bot. Espelha
@@ -266,6 +267,9 @@ export default class AIPlayer extends PlayerBase {
         const chance = 1 - Math.exp(-ATTACK_RATE_PER_SECOND * (delta / 1000));
         if (Math.random() >= chance) return;
 
+        // MIRA do bot: o golpe sai na direção do alvo, contínua, pelo mesmo
+        // `_aimDx/_aimDy` e pela mesma `attackAngle()` do jogador.
+        this.aimAt(target);
         this.setFlipX(target.x < this.x);
 
         if (AIPlayer.shouldCharge(target, alcancaNormal, alcancaCarregado)) {
@@ -321,6 +325,9 @@ export default class AIPlayer extends PlayerBase {
         const esperouDemais = segurando >= this._currentRank.chargeTime + CHARGE_HOLD_MS;
         if (!this.canHit(target, chargeAreaMult(1)) && !esperouDemais) return;
 
+        // Mira refeita no momento de SOLTAR: o alvo andou enquanto o bot
+        // carregava, e é o instante do golpe que congela a direção.
+        this.aimAt(target);
         this.setFlipX(target.x < this.x);
         this.releaseCharge(enemies);
         this._attackCooldown = ATTACK_COOLDOWN_MS;
@@ -344,14 +351,24 @@ export default class AIPlayer extends PlayerBase {
         const to = enemy.getEllipseCenter();
         const dx = to.x - from.x;
         const dy = to.y - from.y;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 === 0) return true;
 
-        const reach = this.collisionRx + attackReach(this._currentRank) * mult
-            + enemy.collisionRx + ATTACK_RANGE_SLACK;
+        // A conta é feita na DIREÇÃO em que o golpe vai sair — que é a do
+        // alvo, porque é isso que `aimAt` escreve logo antes de atacar. Daí
+        // não haver mais teste de faixa lateral: mirando no alvo, o desvio
+        // perpendicular é zero e a faixa (`attackHalfBand`) passaria sempre.
+        // Restou o alcance, agora medido da BORDA da elipse na direção do
+        // golpe (`ellipseRadiusAt`) e não do raio em X — com o ataque preso ao
+        // eixo X os dois eram a mesma coisa, fora dele o raio em X inflaria o
+        // alcance do bot para cima e para baixo. Espelha `World.botCanHit`.
+        const angle = Math.atan2(dy, dx);
+        const reach = ellipseRadiusAt(this.collisionRx, this.collisionRy, angle)
+            + attackReach(this._currentRank) * mult
+            + ellipseRadiusAt(enemy.collisionRx, enemy.collisionRy, angle)
+            + ATTACK_RANGE_SLACK;
         // Compara os quadrados: dispensa a raiz quadrada a cada quadro.
-        if (dx * dx + dy * dy > reach * reach) return false;
-
-        // `Infinity` nos golpes radiais passa direto, sem ramificação extra.
-        return Math.abs(dy) <= attackHalfBand(this._currentRank) * mult + enemy.collisionRy;
+        return dist2 <= reach * reach;
     }
 
     /**

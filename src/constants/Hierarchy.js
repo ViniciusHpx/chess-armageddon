@@ -113,54 +113,54 @@ export const ATTACK_RECOVERY_MAX_MS = 340;
 // ---------------------------------------------------------------------------
 // DIREÇÃO DO GOLPE (espelho de `constants.ts` do servidor)
 //
-// O golpe já saiu preso ao eixo X: a direção era o `flipX`, ou seja, leste ou
-// oeste. Hoje ela é uma das OITO direções, escolhida no controle de ataque, e
-// independente de para onde o personagem anda.
+// O golpe já saiu preso ao eixo X (a direção era o `flipX`: leste ou oeste) e
+// depois passou por uma fase de OITO direções, em que o vetor da mira era
+// encaixado no múltiplo de 45° mais próximo. Hoje não há encaixe nenhum: a
+// direção é o ÂNGULO do vetor de mira, contínuo em todos os 360°.
 //
-// O que trafega é o ÍNDICE (0..7), não o ângulo — mesmo motivo de `atkPower`
-// trafegar a potência final em vez do tempo de carga: os dois lados derivam o
-// ângulo do mesmo índice, então não existe arredondamento para divergir.
-//
-// A ORDEM é contrato de rede, como `RANK_ORDER`: índice 0 é leste e a lista
-// gira no sentido do Y da tela (que cresce para BAIXO), então 2 é sul e 6 é
-// norte. Não reordene de um lado só.
+// O que trafega é o ÂNGULO EM RADIANOS já decidido pelo servidor
+// (`ActorState.atkAngle`, float32): o cliente desenha exatamente o número que
+// gerou o dano, então não há conta repetida de cada lado para divergir. O que
+// o cliente MANDA continua sendo o vetor cru da mira (`ax`/`ay` no pacote de
+// entrada).
 // ---------------------------------------------------------------------------
-
-export const ATTACK_DIR_COUNT = 8;
-
-/** Ângulo entre duas direções vizinhas (45°). */
-const ATTACK_DIR_STEP = (Math.PI * 2) / ATTACK_DIR_COUNT;
 
 /**
  * Módulo mínimo do vetor de mira para ele valer como direção.
  *
  * Abaixo disto o toque conta como "sem mira" e o golpe sai para onde a peça
- * olha (o `flipX`), que é o comportamento de sempre — é o que mantém teclado e
- * bots exatamente como eram.
+ * olha (o `flipX`), que é o comportamento de sempre — é o que mantém o teclado
+ * exatamente como era.
  */
 export const ATTACK_AIM_DEADZONE = 0.35;
 
-/** Direção (0..7) mais próxima de um vetor de mira. */
-export function attackDirIndex(ax, ay) {
-    const i = Math.round(Math.atan2(ay, ax) / ATTACK_DIR_STEP);
-    return ((i % ATTACK_DIR_COUNT) + ATTACK_DIR_COUNT) % ATTACK_DIR_COUNT;
-}
-
-/** Ângulo, em radianos, de uma direção de ataque. */
-export function attackDirAngle(dir) {
-    const i = ((Math.round(dir) % ATTACK_DIR_COUNT) + ATTACK_DIR_COUNT) % ATTACK_DIR_COUNT;
-    return i * ATTACK_DIR_STEP;
+/**
+ * Direção do golpe, em radianos, a partir do vetor de mira. SEM quantização:
+ * o ângulo é o do vetor, e não o múltiplo de 45° mais próximo.
+ *
+ * Espelha `attackAimAngle` de `constants.ts`. Usada pelo jogador E pelos bots
+ * offline (`AIPlayer`, que preenche o mesmo `_aimDx`/`_aimDy` mirando no
+ * alvo). Vetor não finito, zerado ou dentro da zona morta cai no `flipX`.
+ *
+ * @param {boolean} flipX A peça olha para oeste?
+ */
+export function attackAimAngle(ax, ay, flipX) {
+    if (Number.isFinite(ax) && Number.isFinite(ay)
+        && Math.hypot(ax, ay) >= ATTACK_AIM_DEADZONE) {
+        return Math.atan2(ay, ax);
+    }
+    return flipX ? Math.PI : 0;
 }
 
 /**
- * Espera MÍNIMA entre o início de dois golpes, em ms. É o botão de
- * balanceamento do ataque contínuo (espelha `ATTACK_INTERVAL` do servidor —
- * as duas precisam ter o mesmo valor, senão a previsão local desanda).
+ * Espera MÍNIMA entre o início de dois golpes, em ms (espelha
+ * `ATTACK_INTERVAL` do servidor — as duas precisam ter o mesmo valor, senão a
+ * previsão local desanda).
  *
- * Segurar o controle de ataque repete o golpe sozinho, e sem este piso a
- * cadência seria windup + recuperação do golpe leve (160 + 60 = 220 ms, ou seja
- * 4,5 por segundo) — o personagem viraria uma máquina de bater. Com 420 ms dá
- * ~2,4 por segundo.
+ * Segurar o controle NÃO repete golpe: cada golpe custa uma mira nova. Este
+ * piso é o teto de CADÊNCIA para quem mira rápido (e para cliente adulterado);
+ * sem ele seriam windup + recuperação do golpe leve, 160 + 60 = 220 ms, ou 4,5
+ * golpes por segundo. Com 420 ms dá ~2,4 por segundo.
  *
  * Entra como PISO do `_attackReadyAt`, o mesmo gate que já era o freio de spam
  * — não existe um segundo temporizador. Bots não são afetados: o cooldown deles

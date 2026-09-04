@@ -33,6 +33,9 @@ nos dois não garante que o que está no ar é aquilo.
 
 `colyseus.js` é cópia de `../chess-armageddon-server/node_modules/@colyseus/sdk/dist/colyseus.js`. Ao atualizar o SDK no servidor, copie de novo.
 
+O que TEM passos é o app: o build web vai para `www/` (gerado, no `.gitignore`) e
+de lá para o projeto Android. Ver *App mobile (Capacitor + Android)*.
+
 ### Parâmetros de URL
 
 | Parâmetro | Efeito |
@@ -56,7 +59,7 @@ Notebook utilitário (não faz parte do jogo) que concatena todos os `src/**/*.j
 `Start.update()` orquestra tudo explicitamente — as entidades **não** usam `preUpdate` do Phaser:
 
 1. `InputManager.update()` — precisa rodar **antes** de `getAttackState()`, pois é ele que calcula os flags de borda (`justPressed`/`justReleased`); `getAttackState()` os consome e zera.
-2. `player.update(movement, attackState)` — assinatura própria do `HumanPlayer`, diferente do `update` do Phaser.
+2. `player.update(movement, attackState, dashState, delta, attackAim)` — assinatura própria do `HumanPlayer`, diferente do `update` do Phaser. Devolve se o golpe COMEÇOU neste quadro; a cena usa a resposta para chamar `inputs.consumeAttackAim()` (ver *Uma mira, um golpe*).
 3. `aiUpdate(time, delta)` para cada bot dos dois grupos.
 
 Toda entidade **deve** terminar seu update chamando `commonUpdate()` ([PlayerBase.js:291](src/entities/PlayerBase.js#L291)), que faz depth-sorting por `y`, redesenha barra de vida, hitbox de debug, aura e brilho de carga. Esquecer essa chamada congela todos os visuais da entidade.
@@ -172,7 +175,9 @@ gargalo aqui.
 
 Os contadores **não zeram ao morrer nem ao promover** (só a aura zera): no online vivem no `Actor` e trafegam como `uint16` saturado; no offline vivem no `PlayerBase`. O TAB usa `addCapture` para o navegador não tirar o foco do canvas, e o painel se esconde no `BLUR`/`HIDDEN` — sem isso, um Alt+Tab com a tecla presa deixaria o placar preso aberto.
 
-**IA de ataque.** `attackReach()` e `attackHalfBand()` ([Hierarchy.js](src/constants/Hierarchy.js), espelhando `constants.ts`) dizem até onde e em que faixa cada rank acerta. O bot só ataca quando o alvo está nesse alcance, medido entre **centros de elipse** — a mesma origem que `executeAttackHit` usa. Antes eram 100 px fixos para todo rank, medidos de `x`/`y`: o peão (alcance 80) atacava fora e a rainha (150) só colada.
+**IA de ataque.** `attackReach()` ([Hierarchy.js](src/constants/Hierarchy.js), espelhando `constants.ts`) diz até onde cada rank acerta. O bot só ataca quando o alvo está nesse alcance, medido entre **centros de elipse** — a mesma origem que `executeAttackHit` usa. Antes eram 100 px fixos para todo rank, medidos de `x`/`y`: o peão (alcance 80) atacava fora e a rainha (150) só colada.
+
+O alcance é medido **na direção do golpe**: a borda da elipse sai de `ellipseRadiusAt`, não do raio em X. Com o ataque preso ao eixo X os dois eram a mesma coisa; com a mira em 360° o raio em X inflaria em 25 px o alcance para cima e para baixo. Não há mais teste de faixa lateral (`attackHalfBand`) na decisão: o bot mira NO alvo (`aimAt`), então o desvio perpendicular é zero e a faixa passaria sempre. Os dois lados fazem essa conta igual — `World.botCanHit` e `AIPlayer.canHit`.
 
 A cadência é uma **taxa por segundo** convertida com `1 - exp(-taxa * dt)`, não uma chance por tick/quadro. Isso desamarra a agressividade de `TICK_MS` (servidor) e da taxa de quadros (offline). Bot não bate em alvo invulnerável — só gastaria o cooldown.
 
@@ -517,7 +522,7 @@ Os passes trabalham sobre **cópias** das posições, não sobre `body.center` �
 
 Colisão de ataque é **geometria custom**, não física do Phaser. Cada entidade tem uma elipse lógica (`collisionRx`/`collisionRy`, centrada em `getEllipseCenter()`); os helpers estáticos de `PlayerBase` (`rectangleOverlapsEllipse`, `circleOverlapsEllipse`, `diamondOverlapsEllipse`) testam a forma do golpe contra ela.
 
-Formas suportadas: `rectangle`, `circle`, `lshape`, `diamond`. **Adicionar uma nova forma exige editar dois `switch` paralelos** que precisam ficar em sincronia: `drawAttackVisual()` (visual) e `executeAttackHit()` (dano) — a geometria é duplicada entre eles.
+Formas suportadas: `rectangle`, `circle`, `lshape`, `diamond`. O LAYOUT de cada uma vive num `switch` só, em `attackShapes()` ([AttackGeometry.js](src/utils/AttackGeometry.js)), consumido pelo dano offline e pelos DOIS desenhos — não há mais geometria duplicada entre visual e dano. Forma nova entra ali (e no espelho `sim/geometry.ts` do servidor); ver a lista completa do que precisa acompanhar em *Contratos com o servidor*.
 
 Sequência: `performAttack()` marca `_isAttacking`, e um `delayedCall(200)` aplica o hit e finaliza. `_attackHitEnemies` (Set) evita dano duplo no mesmo golpe.
 
@@ -562,7 +567,8 @@ de balanceamento**:
 travar o jogo a 5 FPS dá exatamente o mesmo golpe de 100%.
 
 **Leve × carregado** é troca de tempo por alcance, não de DPS. O ciclo leve
-(160 + 60 ms) repete a cada 220 ms; o cheio custa `chargeTime` + 260 + 340 ms.
+(160 + 60 ms) só volta a ficar disponível em `ATTACK_INTERVAL` (420 ms) — e
+ainda depende de uma mira nova; o cheio custa `chargeTime` + 260 + 340 ms.
 Contra um alvo só, a invulnerabilidade de 500 ms (`HIT_INVULN_MS`) limita os
 dois, e o leve rende mais dano por segundo. O carregado paga por: alcance
 dobrado (pega quem está fugindo), empurrão que cria espaço, e matar em dois
@@ -595,11 +601,91 @@ lentidão sai do `charging` do próprio `Actor`. Soltar, cancelar (dash, morte) 
 ter a carga recusada devolve a velocidade no mesmo tick, porque o fator é lido
 do estado — não existe timer paralelo para dessincronizar.
 
-**Recuperação (`attackRecoveryMs`)** é nova e vale para humanos e bots: antes o
-humano não tinha cooldown nenhum e segurar o botão rendia golpe atrás de golpe.
-É ela que faz o servidor recusar carga cedo demais — o freio de spam.
+**Recuperação (`attackRecoveryMs`)** vale para humanos e bots: antes o humano não
+tinha cooldown nenhum e golpe atrás de golpe saía sem limite. É ela que faz o
+servidor recusar carga cedo demais — o freio de spam. Ela é o teto de CADÊNCIA;
+o que impede a repetição sem mirar de novo é a regra "uma mira, um golpe" acima.
 
 A máquina de carga (`startCharging` / `updateCharge` / `releaseCharge` / `cancelCharge`) mora no `PlayerBase`, não no `HumanPlayer`: humano e bot usam exatamente a mesma, e o que muda entre eles é só **quem decide** apertar e soltar — a entrada do jogador de um lado, `AIPlayer.decideAttack`/`stepCharge` do outro.
+
+### Uma mira, um golpe
+
+Apontar o controle de ataque rende **um** golpe. Segurar a mesma direção não
+rende o segundo: a direção é CONSUMIDA pelo golpe, e a próxima só existe quando
+o jogador recentra o controle e mira de novo — inclusive para a mesma direção.
+
+| Etapa | Onde |
+| --- | --- |
+| dedo arrasta e passa de `ATTACK_AIM_DEADZONE` | `InputManager.update()` arma a borda `justPressed` |
+| golpe sai | `HumanPlayer.update` (offline) / `"a" 1` da `Arena` (online) |
+| mira consumida | `InputManager.consumeAttackAim()` → `VirtualStick.consume()` |
+| controle morto até recentrar | `VirtualStick.moveTo`, pelo campo `consumed` |
+| direção some do personagem | `PlayerBase.performAttack` (offline) e `World.beginAttack` (online) |
+
+O reset do controle é **um só ponto** e cobre as três camadas: miolo de volta ao
+centro (visual), vetor zerado (lógica) e `consumed` de pé (estado interno). O
+dedo continua sendo dono do controle (`active`/`pointerId` intactos), então
+não é preciso levantar para mirar de novo — mas mexer um pixel com o dedo ainda
+lá fora **não** vale: enquanto `consumed` estiver de pé o controle reporta
+neutro, e ele só cai quando o dedo volta para dentro da zona morta. É isso que
+faz "segurar parado" render zero golpes, sem temporizador nenhum.
+
+**Quem consome é quem golpeou.** Offline, `HumanPlayer.update` devolve se o golpe
+começou mesmo (`performAttack` recusa dentro da recuperação) e só então a cena
+chama `consumeAttackAim`. Online, quem decide é o servidor, e o cliente usa o
+espelho local dele (`podeGolpear`, o mesmo `attackReadyAt`): a mensagem `"a" 1`
+vai de qualquer jeito — é relato de entrada —, mas a mira só é consumida quando
+o gate aprova. Golpe recusado não come a mira de ninguém.
+
+A garantia final não é do cliente: mesmo que ele insista, o servidor consome a
+direção no `beginAttack` e ignora mira não renovada (ver o `CLAUDE.md` de lá).
+
+**Carga:** com `CHARGED_ATTACK_ENABLED`, a borda inicia a CARGA e o golpe sai na
+soltura — a mira é consumida lá, com o golpe concluído, e durante a carga ela
+segue viva e ajustável (a direção só congela em `performAttack`).
+
+**Teclado:** o Espaço não tem mira nem controle a recentrar; a borda da tecla já
+dava um golpe por aperto, e continua dando.
+
+**Bots** seguem a mesma regra pelo mesmo caminho: `aimAt` decide a direção
+imediatamente antes de cada golpe e `performAttack` a consome. Bot que não
+tornasse a decidir bateria sem direção — não reaproveita a anterior.
+
+### Direção do golpe: contínua, sem quantização
+
+A direção do golpe é o **ângulo do vetor de mira**, contínua em todos os 360°.
+Já foi encaixe em oito direções (múltiplos de 45°) e, antes disso, só o `flipX`
+(leste/oeste). Hoje não há encaixe em lugar nenhum: apontar 20° acima da
+horizontal ataca a 20°.
+
+| Etapa | Onde |
+| --- | --- |
+| analógico de ataque → vetor cru `{ax, ay}` | `InputManager.getAttackVector()` |
+| vetor → ângulo (zona morta + fallback do `flipX`) | `attackAimAngle()`, em [Hierarchy.js](src/constants/Hierarchy.js) e em `constants.ts` |
+| ângulo → forma do golpe | `attackShapes(..., angle, side)` |
+
+`attackAimAngle` é a **única** conversão de vetor em direção dos dois lados, e
+vale para jogador e bot: o bot preenche o mesmo `aimDx`/`aimDy` mirando no alvo
+(`World.aimAt` online, `PlayerBase.aimAt` offline), então ele também bate em
+qualquer ângulo — antes nenhum bot escrevia mira e todos caíam no `flipX`, ou
+seja, só leste e oeste.
+
+**O que trafega é o ângulo, não o vetor nem um índice.** O cliente manda a mira
+crua no pacote de entrada (`ax`/`ay` do `"i"`), o servidor decide e congela a
+direção em `Actor.atkAngle` no início do golpe, e ela volta em
+`ActorState.atkAngle` (**float32, radianos**) — o cliente desenha o mesmo número
+que causou o dano, como já era com `atkPower`. Encaixar de volta num inteiro
+seria reintroduzir a quantização que se removeu.
+
+**Validação da mira** (`World.setInput`): vetor não finito vira neutro (sem
+mira), e o módulo maior que 1 é limitado por **normalização**, não por clamp de
+cada eixo — cortar os eixos separadamente giraria `(9999, 1000)` para 45° em vez
+dos ~5,7° apontados. O módulo nunca vira alcance: só a direção é usada.
+
+A decisão da IA (`botCanHit` online, `AIPlayer.canHit` offline) passou a medir o
+alcance **na direção do golpe**, com `ellipseRadiusAt` em vez do raio em X, e
+não tem mais teste de faixa lateral: mirando no alvo, o desvio perpendicular é
+zero e `attackHalfBand` passaria sempre.
 
 ### Dash / esquiva
 
@@ -786,7 +872,23 @@ Ganha por abate conforme `AURA_KILL_VALUES`, zerada na morte. Controla apenas o 
 
 ### Input
 
-`InputManager` unifica teclado (WASD / setas + Espaço) e touch (joystick virtual + botão de ataque, ambos com `setScrollFactor(0)`) em duas saídas: `getMovementVector()` → `{dx, dy}` normalizado, e `getAttackState()` → `{held, justPressed, justReleased}`.
+`InputManager` unifica teclado (WASD / setas + Espaço + SHIFT) e toque em saídas
+que ninguém mais precisa interpretar. São **dois controles virtuais** (a mesma
+classe `VirtualStick`, cada um guardando o `pointerId` do dedo que o pegou, para
+os dois funcionarem juntos) mais dois botões, todos com `setScrollFactor(0)`:
+
+| Saída | O quê |
+| --- | --- |
+| `getMovementVector()` | `{dx, dy}` normalizado — joystick da esquerda ou teclado |
+| `getAttackVector()` | `{ax, ay}` CRU da mira — o controle de ataque, sem zona morta aplicada |
+| `getAttackState()` | `{held, justPressed, justReleased}` — a borda é o que dispara o golpe |
+| `getDashState()` / `getDebugState()` | só a borda de descida; consomem o flag |
+| `consumeAttackAim()` | o golpe saiu: recentra o controle de ataque e consome a direção |
+
+`update()` precisa rodar antes de `getAttackState()`: é ele que calcula as
+bordas. O controle de ataque é um JOYSTICK, não um botão — arrastá-lo define a
+direção do golpe (360°), e cada golpe consome essa direção (ver *Uma mira, um
+golpe*).
 
 ### Botão DEBUG
 
@@ -829,6 +931,84 @@ do dash, no mesmo `pointerdown`, e `getDebugState()` consome a borda igual a
 `getDashState()`. Na `Arena` a consulta fica no `update`, não no `sendInput` —
 aquele só roda com a partida em curso, e a borda ficaria presa até a próxima.
 
+## App mobile (Capacitor + Android)
+
+O jogo é empacotado com **Capacitor 8** (`@capacitor/core` + `@capacitor/android`;
+não há plugin de terceiro nem projeto iOS criado ainda). A pasta `www/` é
+**gerada** — é o `webDir` do Capacitor e está no `.gitignore`.
+
+### Tela cheia de verdade: quem faz o quê
+
+| Camada | Arquivo | Papel |
+| --- | --- | --- |
+| barras do sistema | `capacitor.config.json` → `plugins.SystemBars.hidden` | esconde status bar e barra de navegação na subida |
+| comportamento das barras | `MainActivity.onCreate` | `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`: o gesto revela por cima e o SISTEMA as retira sozinho |
+| recuo da WebView | `capacitor.config.json` → `plugins.SystemBars.insetsHandling: "disable"` | a WebView ocupa a janela inteira, sem recuo nenhum |
+| janela borda a borda | `MainActivity` → `setDecorFitsSystemWindows(false)` + `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` | desenha por baixo do recorte nas bordas curtas |
+| orientação | `AndroidManifest.xml` → `screenOrientation="sensorLandscape"` | paisagem nos dois sentidos, antes da primeira medição |
+| fundo da janela | `res/values/colors.xml` + `styles.xml` + `android.backgroundColor` | as três superfícies (janela, WebView, página) no MESMO #040218 |
+| recorte no HUD | `index.html` (`viewport-fit=cover` + `env(safe-area-inset-*)`) e [Viewport.js](src/utils/Viewport.js) | o HUD desvia do notch; o mundo continua ocupando tudo |
+| notch que troca de lado | `installViewportScaling` → ouvinte de `screen.orientation` | girar 180° em paisagem não muda o tamanho da janela (não há `resize`), então uma remedida é agendada para o quadro seguinte — uma por rotação, sem laço |
+
+Não há temporizador, laço nem consulta periódica em nenhuma dessas camadas: as
+barras são escondidas por evento (`onWindowFocusChanged`) e reveladas pelo
+próprio sistema.
+
+### A faixa branca da lateral (corrigida)
+
+Duas causas somadas, as duas reais:
+
+1. **geometria** — o plugin `SystemBars` do Capacitor, no modo padrão
+   (`insetsHandling: "css"`), instala um `OnApplyWindowInsetsListener` no PAI da
+   WebView e, no Android 15+, aplica `setPadding` com os insets de
+   `systemBars() | displayCutout()`. Esconder as barras zera a parte delas, mas
+   **o recorte de tela continua valendo**: em paisagem isso é uma faixa vertical
+   do lado do notch, com a WebView encolhida;
+2. **cor** — o tema aplicado pelo `BridgeActivity`
+   (`setTheme(R.style.AppTheme_NoActionBar)`) é o `AppTheme.NoActionBar` do app,
+   herdado de `Theme.AppCompat.DayNight.NoActionBar` e **sem
+   `android:windowBackground`**. Em aparelho no modo claro isso é BRANCO — e o
+   próprio plugin ainda carimba essa cor no decorView
+   (`decorView.setBackgroundColor(themeColor(windowBackground))`).
+
+Ou seja: a faixa era a WebView recuada pelo recorte, mostrando o fundo branco da
+janela. O recuo saiu (`insetsHandling: "disable"`) e o fundo virou o do jogo.
+
+**O preço do `"disable"`**: o Capacitor deixa de injetar
+`--safe-area-inset-*`, e os recortes passam a vir só dos `env(safe-area-inset-*)`
+do CSS — que é o mecanismo padrão, igual ao do iOS, e funciona em WebView
+**140+** ([bug do Chromium](https://issues.chromium.org/issues/40699457),
+corrigido em set/2025). Em WebView anterior o HUD não desvia do notch. Voltar o
+valor para `"css"` reativa a injeção e traz a faixa de volta — é essa a troca.
+
+O teclado é o único recuo que sobrou, e ele é nosso: `MainActivity` aplica
+`padding` apenas pelo inset `ime()`, senão o teclado cobriria o campo da tela de
+nome numa janela borda a borda. Durante a partida não existe campo de texto, e o
+recuo é sempre zero.
+
+### Empacotar
+
+`www/` não é copiado por script; é cópia manual de `index.html`, `src/`,
+`assets/`, `colyseus.js` e **`phaser.min.js`** — `phaser.js` (7,9 MB, build de
+desenvolvimento) NÃO vai junto, como já diz o comentário do `index.html`.
+
+```bash
+cp index.html www/ && cp -r src/. www/src/          # atualiza o build web
+npx cap sync android                                 # copia para o projeto Android
+cd android && ./gradlew assembleDebug                # APK em app/build/outputs/apk/debug/
+```
+
+### iOS
+
+Não existe pasta `ios/` neste repositório. O que já está pronto para ela: o
+`viewport-fit=cover` e os `env(safe-area-inset-*)` (o caminho nativo do iOS para
+notch, Dynamic Island e home indicator) e o `ios.backgroundColor` do
+`capacitor.config.json`. `insetsHandling` é chave só do Android — o iOS a
+ignora. Ao rodar `npx cap add ios`, falta declarar a paisagem no `Info.plist`
+(`UISupportedInterfaceOrientations` com apenas `LandscapeLeft`/`LandscapeRight`)
+e `UIStatusBarHidden`/`UIRequiresFullScreen`, que são o equivalente do
+`screenOrientation` e do `SystemBars.hidden` de lá.
+
 ## Convenções
 
 - Comentários e mensagens de commit em **português**; commits seguem Conventional Commits (`feat:`, `feat(player):`).
@@ -840,6 +1020,9 @@ aquele só roda com a partida em curso, e a borda ficaria presa até a próxima.
 
 - Assets antigos (`map*.png`, `map_collision*.png`) continuam na pasta sem uso — o mapa em vigor é `arena.png` + `arena_collision.png`.
 - A hitbox de debug é sempre desenhada (não há flag para desligar).
+- `attackHalfBand()` ficou sem uso no cliente: a IA parou de testar faixa lateral. Continua exportada por ser espelho de `constants.ts` (lá ela é testada) — apagar de um lado só é o começo de uma divergência.
+- `www/` é montado à mão (não há script). Copiar a pasta inteira arrastaria o `phaser.js` de 7,9 MB para dentro do APK; a lista do que vai está em *App mobile*.
+- Recorte de tela em WebView Android anterior à 140: `env(safe-area-inset-*)` volta zero e o HUD não desvia do notch. Consequência assumida do `insetsHandling: "disable"` — ver *App mobile*.
 
 ## Modo online (cena `Arena`)
 
@@ -1064,6 +1247,15 @@ eventos `BLUR`/`HIDDEN` do jogo (`haltInput`).
 Pacote com sequência menor ou igual à já processada é descartado pelo servidor
 (`World.setInput`), mas ainda conta como sinal de vida.
 
+A MIRA do golpe viaja no mesmo pacote (`ax`/`ay`), como entrada qualquer: assim
+o golpe e o dash leem a mesma "última entrada recebida" e não há mensagem nova
+no protocolo. Por isso o pacote de entrada é enviado ANTES do `"a" 1` quando os
+dois caem no mesmo quadro — a ordem do transporte garante que o servidor já
+tenha a direção quando o golpe chegar.
+
+O `"a" 1` sai numa BORDA, nunca por intervalo: não existe ataque contínuo em
+nenhum dos dois lados (*Uma mira, um golpe*).
+
 A carga do ataque é cronometrada **pelo servidor**: o cliente só informa
 *apertei* e *soltei*. O brilho de carga local usa o relógio do cliente para não
 atrasar; o dos outros jogadores vem do campo `chargeRatio` do estado.
@@ -1090,11 +1282,17 @@ cada lado recalculasse a partir do tempo, os arredondamentos divergiriam.
 O cliente nunca manda potência, dano ou área: só `"a" 1` e `"a" 0`. Quem
 cronometra é `World.releaseAttack`, com o relógio da sala.
 
-Adicionar uma forma de ataque nova agora exige **cinco** `switch` em sincronia:
-`drawAttackVisual()` do `PlayerBase` (offline), `drawAttackVisual()` do
-`ArenaActor` (desenho online), `executeAttackHit()` do `World` (dano online) e
-os dois pares `attackReach()`/`attackHalfBand()` (alcance da IA), um em cada
-lado. Esquecer os últimos não quebra o golpe — só faz o bot mirar errado.
+A direção do golpe trafega como `ActorState.atkAngle` (float32, radianos) — ver
+*Uma mira, um golpe* e *Direção do golpe: contínua, sem quantização*.
+
+Adicionar uma forma de ataque nova exige **quatro** funções em sincronia, duas
+de cada lado: `attackShapes()` (o layout, em
+[AttackGeometry.js](src/utils/AttackGeometry.js) aqui e em `sim/geometry.ts` lá)
+e `attackReach()` (o alcance que a IA usa para decidir, em
+[Hierarchy.js](src/constants/Hierarchy.js) e em `constants.ts`). Esquecer o
+alcance não quebra o golpe — só faz o bot atacar cedo ou tarde demais.
+`attackHalfBand()` continua nos dois lados como descrição da forma (e é testada
+no servidor), mas **não** entra mais em decisão nenhuma da IA.
 
 ### Diferenças de comportamento em relação ao offline
 

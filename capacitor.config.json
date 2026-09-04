@@ -2,9 +2,17 @@
   "appId": "com.chessarmageddon.game",
   "appName": "Chess Armageddon",
   "webDir": "www",
+  "android": {
+    "backgroundColor": "#040218"
+  },
+  "ios": {
+    "backgroundColor": "#040218"
+  },
   "plugins": {
     "SystemBars": {
-      "hidden": true
+      "hidden": true,
+      "style": "DARK",
+      "insetsHandling": "disable"
     }
   }
 }

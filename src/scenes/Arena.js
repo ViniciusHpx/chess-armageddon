@@ -753,11 +753,14 @@ export class Arena extends Phaser.Scene {
         // para a previsão — quem decide se o golpe sai é o servidor.
         const podeGolpear = localState.alive && this.time.now >= this.localAttackReadyAt;
 
-        // O aperto é RELATO DE ENTRADA, não pedido de golpe: ele é o que diz ao
-        // servidor "estou segurando o botão", e é disso que o ataque contínuo
-        // vive. Por isso não passa pelo gate local — um toque que caia dentro
-        // da recuperação seria engolido aqui, o servidor nunca saberia do
-        // "segurando", e a repetição jamais começaria.
+        // UMA MIRA, UM GOLPE: o pedido sai na BORDA de aperto, e cada borda
+        // custa uma direção nova no controle de ataque (ver `InputManager`).
+        // Não existe mais repetição por "segurar" — nem aqui nem no servidor.
+        //
+        // A mensagem vai mesmo quando o gate local recusa: ela é relato de
+        // entrada, e é o servidor quem decide se vira golpe. O que o gate
+        // decide é só a PREVISÃO — e o consumo da mira, que segue o golpe de
+        // verdade.
         if (attack.justPressed && localState.alive) {
             // A mira precisa chegar ANTES do golpe, pelo mesmo motivo do dash:
             // quem escolhe a direção é o servidor, e ele lê a ÚLTIMA entrada
@@ -776,19 +779,15 @@ export class Arena extends Phaser.Scene {
                 this.localCharging = true;
                 this.localChargeStart = this.time.now;
             }
-        }
 
-        // ATAQUE CONTÍNUO: nenhuma mensagem sai daqui. Quem repete o golpe é o
-        // servidor, que sabe do "segurando" desde o `"a" 1` acima (ver
-        // `World.stepPlayer`) — reenviar por intervalo só gastaria banda e o
-        // `maxMessagesPerSecond` da sala.
-        //
-        // O que se faz aqui é acompanhar o MESMO ritmo localmente, porque a
-        // previsão precisa desacelerar nos mesmos instantes; sem isso a
-        // reconciliação desfaria o trecho andado a mais a cada repetição. Cobre
-        // também o quadro do aperto, em que `held` já é verdadeiro.
-        if (!CHARGED_ATTACK_ENABLED && attack.held && podeGolpear) {
-            this.beginLocalAttack();
+            // Carga desligada: este aperto JÁ é o golpe. A previsão local
+            // desacelera junto (o servidor vai desacelerar no tick em que
+            // receber), e a mira é consumida — controle de volta ao centro,
+            // próximo golpe só com direção nova.
+            if (!CHARGED_ATTACK_ENABLED && podeGolpear) {
+                this.beginLocalAttack();
+                this.inputs.consumeAttackAim();
+            }
         }
 
         const dash = this.inputs.getDashState();
@@ -798,6 +797,9 @@ export class Arena extends Phaser.Scene {
             if (this.localCharging && localState.alive) {
                 this.localAttackPending = true;
                 this.localAttackSentAt = this.time.now;
+                // O golpe carregado só termina AQUI, então é aqui que a mira
+                // dele é consumida — não no aperto que começou a carga.
+                this.inputs.consumeAttackAim();
 
                 // Mesma conta do servidor, com o relógio local: quanto tempo
                 // este golpe ocupa antes de a próxima carga poder começar.

@@ -205,16 +205,34 @@ class VirtualStick {
      * @param {number} thumbRadius
      * @param {number} grabRadius Distância do centro em que um toque pega o controle.
      */
-    constructor(x, y, baseRadius, thumbRadius, grabRadius) {
+    /**
+     * @param {number} neutralForce Módulo abaixo do qual o controle conta como
+     *        CENTRADO. Só serve ao consumo da direção (`consume()`), então o
+     *        joystick de movimento — que nunca consome nada — deixa em 0 e se
+     *        comporta exatamente como sempre se comportou.
+     */
+    constructor(x, y, baseRadius, thumbRadius, grabRadius, neutralForce = 0) {
         this.baseX = x;
         this.baseY = y;
         this.maxDist = baseRadius - thumbRadius;
         this.grabRadius = grabRadius;
+        this.neutralForce = neutralForce;
 
         this.active = false;
         this.force = { x: 0, y: 0 };
         /** Dedo que está usando este controle; null = nenhum. */
         this.pointerId = null;
+
+        /**
+         * A direção atual já foi USADA por um golpe.
+         *
+         * Enquanto isto estiver de pé o controle reporta vetor neutro e o miolo
+         * fica no centro, mesmo com o dedo parado lá fora: é o que faz UMA mira
+         * valer UM golpe. Cai sozinho quando o dedo volta para dentro de
+         * `neutralForce` — ou seja, quando o jogador de fato recentra o
+         * controle e pode mirar de novo.
+         */
+        this.consumed = false;
     }
 
     /** Este toque pega o controle? */
@@ -258,15 +276,47 @@ class VirtualStick {
             dy = (dy / dist) * this.maxDist;
         }
 
+        // Direção já consumida: o controle segue MORTO até o dedo voltar ao
+        // centro. Sem esta trava, mexer um pixel com o dedo ainda lá fora
+        // devolveria o vetor antigo inteiro e o golpe se repetiria — que é
+        // justamente o que se está tirando.
+        if (this.consumed) {
+            if (dist / this.maxDist >= this.neutralForce) {
+                this.thumbX = this.baseX;
+                this.thumbY = this.baseY;
+                this.redraw();
+                return;
+            }
+            this.consumed = false;
+        }
+
         this.thumbX = this.baseX + dx;
         this.thumbY = this.baseY + dy;
         this.force = { x: dx / this.maxDist, y: dy / this.maxDist };
         this.redraw();
     }
 
+    /**
+     * Consome a direção: miolo de volta ao centro, vetor zerado, e o controle
+     * fica neutro até o dedo recentrar (ver `consumed`).
+     *
+     * É o reset pedido pelo golpe — visual, lógico e de estado interno de uma
+     * vez só, sem temporizador nenhum. Chamado com o dedo AINDA na tela, então
+     * `active`/`pointerId` continuam de pé: o mesmo dedo segue dono do
+     * controle e pode mirar de novo sem levantar.
+     */
+    consume() {
+        this.force = { x: 0, y: 0 };
+        this.thumbX = this.baseX;
+        this.thumbY = this.baseY;
+        this.consumed = this.active;
+        this.redraw();
+    }
+
     release() {
         this.active = false;
         this.pointerId = null;
+        this.consumed = false;
         this.force = { x: 0, y: 0 };
         this.thumbX = this.baseX;
         this.thumbY = this.baseY;
@@ -316,8 +366,9 @@ export default class InputManager {
 
         this._prevTouchAttackDown = false;   // estado anterior para detecção de borda
 
-        // O controle de ataque já foi ARRASTADO até uma direção válida no
-        // toque que está em curso? Ver `update()`.
+        // Existe uma direção de ataque DEFINIDA e ainda não usada por um
+        // golpe? É o estado que sustenta "uma mira, um golpe" — ver `update()`
+        // e `consumeAttackAim()`.
         this._attackAimArmed = false;
 
         this._lastSpaceDown = false;         // estado anterior do espaço
@@ -418,7 +469,11 @@ export default class InputManager {
 
         // Raio de pega = o próprio raio do controle. Maior que isso invadiria o
         // botão de dash, que está a ~100 px do centro daqui.
-        this.attackStick = new VirtualStick(x, y, raio, ATTACK_STICK_THUMB, raio);
+        // A zona morta da mira é também o raio de "centrado": abaixo dela não
+        // existe direção, e é ali que uma direção nova pode ser armada.
+        this.attackStick = new VirtualStick(
+            x, y, raio, ATTACK_STICK_THUMB, raio, ATTACK_AIM_DEADZONE
+        );
 
         this.attackBase = this.scene.add.circle(x, y, raio, ATTACK_BTN_COLOR, ATTACK_BTN_ALPHA)
             .setScrollFactor(0)
@@ -726,9 +781,11 @@ export default class InputManager {
      * `flipX` do personagem — o comportamento de sempre. É o que o Espaço do
      * teclado devolve, então quem joga de teclado não muda nada.
      *
-     * A zona morta e o encaixe nas oito direções NÃO são aplicados aqui: quem
-     * faz isso é o servidor (`World.attackDir`), com as mesmas constantes. O
-     * cliente só relata o arraste.
+     * O vetor sai CRU e contínuo: a zona morta e a conversão em ângulo não são
+     * aplicadas aqui, e não existe encaixe em direção nenhuma — quem converte é
+     * `attackAimAngle`, no servidor (`World.attackAngle`) e no offline
+     * (`PlayerBase.attackAngle`), com a mesma constante. O cliente só relata o
+     * arraste, e é o arraste inteiro que define a direção do golpe.
      */
     getAttackVector() {
         if (!this.attackStick.active) return { ax: 0, ay: 0 };
@@ -760,14 +817,21 @@ export default class InputManager {
         //
         // Quem ARMA o ataque é o arraste passar de `ATTACK_AIM_DEADZONE`.
         // Abaixo disso não existe direção definida, e é justamente esse o
-        // limiar que `World.attackDir` (online) e `PlayerBase.attackDir`
-        // (offline) usam para decidir se leem a mira ou o `flipX` — então não
-        // sobra faixa em que o cliente mande atacar e o outro lado responda
-        // "sem mira".
+        // limiar que `attackAimAngle` usa dos dois lados para decidir se lê a
+        // mira ou o `flipX` — então não sobra faixa em que o cliente mande
+        // atacar e o outro lado responda "sem mira".
         //
-        // Armado, continua armado até o dedo SAIR do controle: é o `held` que
-        // sustenta o ataque contínuo, e desarmar ao passar de novo perto do
-        // centro faria o golpe piscar em cima do limiar. Soltar (ou o
+        // UMA MIRA, UM GOLPE. Armado, continua armado até o golpe CONSUMIR a
+        // direção (`consumeAttackAim`) ou o dedo sair do controle. Consumida, a
+        // direção só volta a existir quando o jogador recentra o controle e
+        // mira de novo — quem garante isso é o `consumed` do próprio
+        // `VirtualStick`, que reporta vetor neutro no intervalo. Segurar o dedo
+        // parado, portanto, não rende um segundo golpe: sem vetor não há
+        // `temDirecao`, e sem borda de aperto não há ataque.
+        //
+        // Desarmar por passar perto do centro (sem golpe) continua NÃO
+        // acontecendo, senão o golpe piscaria em cima do limiar enquanto o
+        // jogador ajusta a mira — o que importa para carregar. Soltar (ou o
         // `release()` do BLUR e do redimensionamento) zera pelo `active`.
         const mirando = this.attackStick.active;
         const temDirecao = mirando && Math.hypot(
@@ -828,5 +892,26 @@ export default class InputManager {
         this._attackJustPressed = false;
         this._attackJustReleased = false;
         return state;
+    }
+
+    /**
+     * O golpe saiu: a direção que o alimentou está CONSUMIDA.
+     *
+     * Chamado por quem de fato disparou o golpe — `Start` no modo offline e
+     * `Arena` no online —, e só quando ele começou mesmo. É o reset pedido, nas
+     * três camadas de uma vez: o miolo volta ao centro (visual), o vetor zera
+     * (lógica) e o controle fica armável só depois de recentrar (estado
+     * interno). Nada de temporizador: o próximo golpe espera uma mira NOVA.
+     *
+     * Com o ataque carregado ligado, quem chama espera o golpe SAIR (a soltura
+     * da carga) — durante a carga a mira continua viva e ajustável, que é o
+     * ponto de carregar.
+     *
+     * O teclado não tem mira nem controle a recentrar; para ele isto só desarma
+     * o estado, e a borda do Espaço já garante um golpe por tecla.
+     */
+    consumeAttackAim() {
+        this.attackStick.consume();
+        this._attackAimArmed = false;
     }
 }

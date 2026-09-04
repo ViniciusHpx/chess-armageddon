@@ -130,6 +130,39 @@ export function installViewportScaling(game) {
     };
 
     scale.on(Phaser.Scale.Events.RESIZE, ajustar);
+
+    // Segunda medição, um quadro depois de girar o aparelho.
+    //
+    // Virar o celular 180° em paisagem (esquerda → direita) NÃO muda o tamanho
+    // da janela: não há `resize`, e o único aviso é o `orientationchange` — que
+    // o próprio `ScaleManager` já escuta e converte em RESIZE. O tamanho, esse,
+    // continua certo sozinho.
+    //
+    // O que troca de lado é o RECORTE: o notch estava à esquerda e passou a
+    // estar à direita. Os `env(safe-area-inset-*)` são publicados pelo WebView
+    // junto com os insets do sistema, que podem chegar DEPOIS do evento — e aí
+    // o HUD ficaria desviando do lado errado até a próxima mudança de tamanho,
+    // que num jogo em paisagem travada pode nunca vir.
+    //
+    // É UMA medição por rotação, agendada por evento e cancelada se outra
+    // rotação chegar antes. Não há laço, temporizador repetido nem consulta
+    // periódica: fora do instante em que se gira o aparelho, isto não roda.
+    const orientacao = window.screen && window.screen.orientation;
+    if (orientacao && orientacao.addEventListener) {
+        let agendada = 0;
+
+        orientacao.addEventListener('change', () => {
+            if (agendada) cancelAnimationFrame(agendada);
+
+            agendada = requestAnimationFrame(() => {
+                agendada = 0;
+                ajustar();
+                // Reemite RESIZE mesmo com o tamanho igual: é ele que faz cada
+                // `Viewport` reler os recortes e reposicionar o HUD.
+                scale.refresh();
+            });
+        });
+    }
 }
 
 /** Recortes do sistema (notch, barra de gestos), em pixels de CSS. */

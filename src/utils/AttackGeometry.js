@@ -12,8 +12,6 @@
  * `PlayerBase`) também precisa da mesma geometria. O `PlayerBase` mantém os
  * estáticos como atalhos para não mudar a interface que o `CLAUDE.md` descreve.
  */
-import { attackDirAngle } from '../constants/Hierarchy.js';
-
 function clamp(valor, min, max) {
     return Math.max(min, Math.min(max, valor));
 }
@@ -157,7 +155,7 @@ export function orientedRectPoints(cx, cy, halfLength, halfWidth, angle) {
  * @param {number} centerY Centro da elipse do atacante.
  * @param {number} rx Raio da elipse do atacante.
  * @param {number} ry Raio da elipse do atacante.
- * @param {number} angle Direção do golpe (`attackDirAngle(atkDir)`).
+ * @param {number} angle Direção do golpe, em radianos.
  * @param {number} side Lado da perna do L, -1 ou 1, na PERPENDICULAR ao golpe.
  */
 export function attackShapes(attack, mult, centerX, centerY, rx, ry, angle, side) {
@@ -297,8 +295,7 @@ export function drawAttackShape(g, shape) {
  * atacante — a conta antiga —, e em ângulo 0 é exatamente o que esta devolve.
  * Fora do eixo X, comparar Y do mundo mandaria a perna para o lado errado.
  */
-export function attackSideFor(dir, fromX, fromY, toX, toY) {
-    const angle = attackDirAngle(dir);
+export function attackSideFor(angle, fromX, fromY, toX, toY) {
     const px = -Math.sin(angle);
     const py = Math.cos(angle);
     return (toX - fromX) * px + (toY - fromY) * py > 0 ? 1 : -1;

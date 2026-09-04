@@ -82,10 +82,13 @@ export default class HumanPlayer extends PlayerBase {
      *        controle de ataque. Neutra (ou ausente, no caso do teclado)
      *        significa "sem mira", e aí o golpe sai pelo `flipX` — o
      *        comportamento de sempre.
+     * @returns {boolean} O golpe começou NESTE quadro? Quem chama usa a
+     *        resposta para consumir a mira do controle de ataque
+     *        (`InputManager.consumeAttackAim`).
      */
     update(movement, attackState, dashState, deltaMs, attackAim) {
         // Morto: ignora entrada até renascer
-        if (this._isDead) return;
+        if (this._isDead) return false;
 
         // A mira é lida ANTES de qualquer golpe sair: é dela que
         // `performAttack` congela a direção. Guardar no personagem (em vez de
@@ -100,25 +103,26 @@ export default class HumanPlayer extends PlayerBase {
             this.startDash(movement.dx, movement.dy);
         }
 
-        // Entrada de ataque.
+        // Entrada de ataque: UMA MIRA, UM GOLPE.
         //
-        // Com a carga desligada, `held` (e não só `justPressed`) é o gatilho: é
-        // isso que faz o golpe se repetir enquanto o controle está pressionado.
-        // O ritmo é o `_attackReadyAt`, cujo piso é `ATTACK_INTERVAL` — e
-        // `attackLight` sai na hora se já está atacando ou em recuperação,
-        // então chamar todo quadro não encadeia golpe nem cria temporizador
-        // paralelo.
+        // O gatilho é a BORDA (`justPressed`), nunca o `held`. Era o `held` que
+        // fazia o golpe se repetir sozinho enquanto o controle estivesse
+        // apontado — o comportamento que se está tirando. Hoje cada golpe
+        // precisa de uma direção nova: quem arma a borda é o controle passando
+        // da zona morta depois de recentrado (ver `InputManager`).
         //
-        // Com a carga LIGADA nada disso vale: segurar significa carregar, e
-        // repetir atropelaria a carga.
+        // Com a carga LIGADA a borda começa a CARGA, e o golpe sai na soltura —
+        // é por isso que a mira só é consumida lá, com o golpe já concluído.
+        let golpeou = false;
+
         if (CHARGED_ATTACK_ENABLED) {
             if (attackState.justPressed) this.startCharging();
-        } else if (attackState.held && !this.isDashing) {
-            this.attackLight(this.scene.enemyPlayers);
+        } else if (attackState.justPressed && !this.isDashing) {
+            golpeou = this.attackLight(this.scene.enemyPlayers);
         }
 
         if (attackState.justReleased) {
-            this.releaseCharge(this.scene.enemyPlayers);
+            golpeou = this.releaseCharge(this.scene.enemyPlayers) || golpeou;
         }
 
         if (this._isCharging) {
@@ -151,6 +155,8 @@ export default class HumanPlayer extends PlayerBase {
         }
 
         this.commonUpdate(deltaMs);
+
+        return golpeou;
     }
 
     handleVisualEffects(dx, dy) {

@@ -112,7 +112,13 @@ export class Start extends Phaser.Scene {
         const attackAim = this.inputs.getAttackVector();
 
         if (!this.player._isDead) {
-            this.player.update(movement, attackState, dashState, delta, attackAim);
+            // O golpe que SAIU consome a mira: o controle de ataque volta ao
+            // centro e o próximo golpe exige uma direção nova. Golpe recusado
+            // (recuperação em curso) não consome nada — o jogador continua
+            // apontado para onde estava.
+            if (this.player.update(movement, attackState, dashState, delta, attackAim)) {
+                this.inputs.consumeAttackAim();
+            }
         }
 
         // DEBUG: avança a peça no ciclo. Offline não há autoridade nenhuma —
